@@ -241,6 +241,15 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void checkConnection() {
+        manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
+            @Override
+            public void onConnectionInfoAvailable(WifiP2pInfo info) {
+                Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
+            }
+        });
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -277,7 +286,6 @@ public class MainActivity extends Activity {
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                discoverService();
             }
         });
 
@@ -285,7 +293,6 @@ public class MainActivity extends Activity {
         receiverButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                registerService();
             }
         });
 
@@ -309,7 +316,8 @@ public class MainActivity extends Activity {
 
         super.onResume();
         registerReceiver(receiver, intentFilter);
-        discoverPeers();
+//        discoverPeers();
+        checkConnection();
     }
 
     @Override

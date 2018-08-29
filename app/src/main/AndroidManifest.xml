@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.joshua.stereoonair">
 
-    <uses-sdk android:minSdkVersion="21" />
+    <uses-sdk android:minSdkVersion="23" />
     <uses-permission
         android:required="true"
         android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -21,6 +21,9 @@
     <uses-permission
         android:required="true"
         android:name="android.permission.INTERNET" />
+    <uses-permission
+        android:required="true"
+        android:name="android.permission.CAMERA" />
 
     <application
         android:allowBackup="true"
