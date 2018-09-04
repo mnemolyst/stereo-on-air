@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Stereo On Air</string>
+    <string name="notification_title">Recording</string>
+    <string name="notification_message">Recording Video</string>
 </resources>

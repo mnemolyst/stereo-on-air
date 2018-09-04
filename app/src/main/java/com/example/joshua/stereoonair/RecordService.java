@@ -1,26 +1,17 @@
 package com.example.joshua.stereoonair;
 
 import android.Manifest;
-import android.app.Activity;
 import android.app.IntentService;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Color;
-import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
-import android.hardware.SensorManager;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -28,36 +19,20 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
-import android.location.Location;
-import android.media.AudioFormat;
-import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
-import android.media.MediaMuxer;
-import android.media.MediaRecorder;
 import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
-import android.provider.BaseColumns;
-import android.text.format.DateFormat;
+import android.util.Log;
 import android.view.Surface;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
-import java.util.List;
-
-import static java.lang.Math.PI;
-import static java.lang.Math.max;
-import static java.lang.Math.sin;
 
 /**
  * An {@link IntentService} subclass for handling asynchronous task requests in
@@ -75,20 +50,14 @@ public class RecordService extends Service {
         HIGH_1080P, MED_720P
     }
     private RecordState recordState = RecordState.STOPPED;
-    private static VideoQuality videoQuality;
+    private static VideoQuality videoQuality = VideoQuality.HIGH_1080P;
     private CameraDevice cameraDevice;
     private CaptureRequest.Builder captureRequestBuilder;
     private CameraCaptureSession cameraCaptureSession;
     private MediaCodec videoCodec;
     private Surface videoInputSurface;
-    private MediaCodec audioCodec;
     private MediaFormat videoFormat;
-    private MediaFormat audioFormat;
     private Integer sensorOrientation = 0;
-
-    private AudioRecord audioRecord;
-    private int audioSampleRate = 48000;
-    private int audioChunkBytes = audioSampleRate * 2 / 24;
 
     private OnStartRecordCallback onStartRecordCallback;
     private OnStopRecordCallback onStopRecordCallback;
@@ -128,7 +97,7 @@ public class RecordService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
 
-        //Log.d(TAG, "onStartCommand");
+        Log.d(TAG, "onStartCommand");
 
         recordState = RecordState.STOPPED;
         startRecording();
@@ -166,7 +135,7 @@ public class RecordService extends Service {
             public void run() {
 
                 if (getApplicationContext().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED) {
-                   //Log.e(TAG, "No camera permission!");
+                    Log.e(TAG, "No camera permission!");
                     stopSelf();
                     return;
                 }
@@ -227,7 +196,6 @@ public class RecordService extends Service {
     private void prepareForRecording() {
 
         videoFormat = null;
-        audioFormat = null;
 
         try {
             startVideoCodec();
@@ -249,7 +217,7 @@ public class RecordService extends Service {
         } else if (videoQuality == VideoQuality.MED_720P) {
             format = MediaFormat.createVideoFormat("video/avc", 1280, 720);
         } else {
-           //Log.e(TAG, "No suitable video resolution found.");
+            Log.e(TAG, "No suitable video resolution found.");
             stopSelf();
             return;
         }
@@ -261,6 +229,7 @@ public class RecordService extends Service {
 
         MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
         String codecName = codecList.findEncoderForFormat(format);
+        Log.d(TAG, "codecName: " + codecName);
         format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
 
         videoCodec = MediaCodec.createByCodecName(codecName);
@@ -388,7 +357,6 @@ public class RecordService extends Service {
         }
     };
 
-    @RequiresApi(Build.VERSION_CODES.O)
     private String createNotificationChannel() {
         String channelId = "record_service";
         String channelName = "Background Recording Service";
@@ -408,17 +376,13 @@ public class RecordService extends Service {
         Notification.Builder builder;
         Notification notification;
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            channelId = createNotificationChannel();
-            builder = new Notification.Builder(this, channelId);
-        } else {
-            builder = new Notification.Builder(this);
-        }
+        channelId = createNotificationChannel();
+        builder = new Notification.Builder(this, channelId);
 
         notification = builder
                 .setContentTitle(getText(R.string.notification_title))
 //                .setContentText(getText(R.string.notification_message))
-                .setSmallIcon(R.drawable.recording_notification_icon)
+//                .setSmallIcon(R.drawable.recording_notification_icon)
                 .setContentIntent(pendingIntent)
                 .build();
 
@@ -431,7 +395,6 @@ public class RecordService extends Service {
 
     void discardRecording() {
 
-        saveRecording = false;
         stopRecording();
     }
 
@@ -465,28 +428,6 @@ public class RecordService extends Service {
 //            videoCodec.signalEndOfInputStream();
         }
 
-        if (audioRecord != null
-                && audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-
-            audioRecord.stop();
-        }
-
-        SensorManager sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        sensorManager.unregisterListener(sensorEventListener);
-
-        if (saveLocation
-                && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                && MainActivity.hasLocationApi()) {
-
-            location = LocationServices.FusedLocationApi.getLastLocation(MainActivity.googleApiClient);
-        } else {
-            location = null;
-        }
-
-        if (saveRecording) {
-            boolean saved = dumpBuffersToFile();
-        }
-
         if (onStopRecordCallback != null) {
             onStopRecordCallback.onStopRecord();
         }
@@ -495,199 +436,6 @@ public class RecordService extends Service {
         stopForeground(true);
         stopSelf();
     }
-
-    private boolean dumpBuffersToFile() {
-
-        String formattedDate = (String) DateFormat.format("yyyy-MM-dd HH:mm:ss", Calendar.getInstance());
-
-        internalFile = new File(getApplicationContext().getFilesDir(), formattedDate + ".mp4");
-        String filePath = internalFile.getAbsolutePath();
-
-        File thumbnailFile = new File(getApplicationContext().getFilesDir(), formattedDate + "_thumbnail.jpg");
-
-        /*try {
-            internalFile.delete();
-            internalFile.createNewFile();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }*/
-
-        MediaMuxer mediaMuxer = null;
-        try {
-            mediaMuxer = new MediaMuxer(filePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-        } catch (IOException e) {
-            e.printStackTrace();
-            stopSelf();
-            return false;
-        }
-
-        if (videoFormat == null) {
-           //Log.d(TAG, "null videoFormat");
-            stopSelf();
-            return false;
-        }
-
-        int videoTrackIdx = mediaMuxer.addTrack(videoFormat);
-
-        int audioTrackIdx = -1;
-        if (recordAudio && audioFormat != null) {
-            audioTrackIdx = mediaMuxer.addTrack(audioFormat);
-        }
-
-        if (location != null) {
-            mediaMuxer.setLocation((float) location.getLatitude(), (float) location.getLongitude());
-//                Log.d(TAG, "latitude: " + String.valueOf(location.getLatitude()));
-//                Log.d(TAG, "longitude: " + String.valueOf(location.getLongitude()));
-        }
-
-        mediaMuxer.setOrientationHint(sensorOrientation);
-
-        mediaMuxer.start();
-
-        long latestPt = 0;
-        for (BufferDataInfoPair dataInfoPair : videoBufferList) {
-
-            long bufferId = dataInfoPair.getDataId();
-            MediaCodec.BufferInfo info = dataInfoPair.getBufferInfo();
-            if (info.presentationTimeUs > latestPt) {
-                latestPt = info.presentationTimeUs;
-            } else {
-                continue;
-            }
-
-            Cursor cursor = videoDb.query(EncodedVideoContract.Schema.TABLE_NAME,
-                    null,
-                    EncodedVideoContract.Schema._ID + " = " + String.valueOf(bufferId),
-                    null, null, null,
-                    EncodedVideoContract.Schema._ID + " ASC");
-
-            if (! cursor.moveToFirst()) {
-                continue;
-            }
-
-            ByteBuffer buffer = ByteBuffer.wrap(cursor.getBlob(
-                    cursor.getColumnIndex(EncodedVideoContract.Schema.VIDEO_DATA_COLUMN_NAME)
-            ));
-
-            cursor.close();
-
-            mediaMuxer.writeSampleData(videoTrackIdx, buffer, info);
-        }
-
-        if (recordAudio && audioTrackIdx != -1) {
-
-            latestPt = 0;
-            for (BufferDataInfoPair dataInfoPair : audioBufferList) {
-
-                long bufferId = dataInfoPair.getDataId();
-                MediaCodec.BufferInfo info = dataInfoPair.getBufferInfo();
-                if (info.presentationTimeUs > latestPt) {
-                    latestPt = info.presentationTimeUs;
-                } else {
-                    continue;
-                }
-
-                Cursor cursor = audioDb.query(EncodedAudioContract.Schema.TABLE_NAME,
-                        null,
-                        EncodedAudioContract.Schema._ID + " = " + String.valueOf(bufferId),
-                        null, null, null,
-                        EncodedAudioContract.Schema._ID + " ASC");
-
-                if (!cursor.moveToFirst()) {
-                    continue;
-                }
-
-                ByteBuffer buffer = ByteBuffer.wrap(cursor.getBlob(
-                        cursor.getColumnIndex(EncodedAudioContract.Schema.AUDIO_DATA_COLUMN_NAME)
-                ));
-
-                cursor.close();
-
-                mediaMuxer.writeSampleData(audioTrackIdx, buffer, info);
-            }
-        }
-
-        mediaMuxer.stop();
-        mediaMuxer.release();
-
-        /*Bitmap thumbnail = ThumbnailUtils.createVideoThumbnail(filePath, MediaStore.Images.Thumbnails.MICRO_KIND);
-        try {
-            OutputStream thumbnailOutputStream = new FileOutputStream(thumbnailFile);
-            thumbnail.compress(Bitmap.CompressFormat.JPEG, 75, thumbnailOutputStream);
-            thumbnailOutputStream.flush();
-            thumbnailOutputStream.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }*/
-
-        //SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
-
-        if (backupToDrive && MainActivity.hasDriveApi()) {
-
-                /*String folderId = sharedPreferences.getString(KEY_DRIVE_FOLDER_ID, null);
-                DriveId driveId = null;
-                if (folderId != null) {
-                    driveId = DriveId.decodeFromString(folderId);
-                }
-                if (driveId != null) {
-                    DriveFolder driveFolder = driveId.asDriveFolder();
-                }
-
-                MetadataChangeSet changeSet = new MetadataChangeSet.Builder()
-                        .setTitle("Flight Recorder").build();
-
-                Drive.DriveApi.getRootFolder(MainActivity.googleApiClient).createFolder(
-                        MainActivity.googleApiClient, changeSet).setResultCallback(folderCreatedCallback);*/
-
-            Drive.DriveApi.newDriveContents(MainActivity.googleApiClient).setResultCallback(driveContentsResultCallback);
-        }
-
-        return true;
-    }
-
-    private ResultCallback<DriveApi.DriveContentsResult> driveContentsResultCallback = new ResultCallback<DriveApi.DriveContentsResult>() {
-
-        @Override
-        public void onResult(@NonNull DriveApi.DriveContentsResult driveContentsResult) {
-
-//            Log.d(TAG, "driveContentsCallback.onResult");
-
-            DriveContents driveContents = driveContentsResult.getDriveContents();
-
-            try {
-                FileInputStream fileInputStream = new FileInputStream(internalFile);
-                OutputStream outputStream = driveContents.getOutputStream();
-
-                byte[] buffer = new byte[1024 * 10];
-                int len;
-                while ((len = fileInputStream.read(buffer)) != -1) {
-                    outputStream.write(buffer, 0, len);
-                }
-
-                fileInputStream.close();
-                outputStream.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-                return;
-            }
-
-            MetadataChangeSet changeSet = new MetadataChangeSet.Builder()
-                    .setTitle("Flight Recording " + internalFile.getName())
-                    .setMimeType("video/mp4").build();
-
-            Drive.DriveApi.getRootFolder(MainActivity.googleApiClient).createFile(MainActivity.googleApiClient, changeSet, driveContents);
-        }
-    };
-
-    private ResultCallback<DriveFolder.DriveFolderResult> folderCreatedCallback = new ResultCallback<DriveFolder.DriveFolderResult>() {
-        @Override
-        public void onResult(@NonNull DriveFolder.DriveFolderResult driveFolderResult) {
-            Status status = driveFolderResult.getStatus();
-            if (status.isSuccess()) {
-                driveFolderResult.getDriveFolder().getDriveId();
-            }
-        }
-    };
 
     private void releaseResources() {
 
@@ -700,18 +448,6 @@ public class RecordService extends Service {
         if (cameraDevice != null) {
             cameraDevice.close();
         }
-
-        if (audioCodec != null) {
-            audioCodec.release();
-        }
-        if (audioRecord != null) {
-            audioRecord.release();
-        }
-    }
-
-    public static void setRecordDuration(int recordDuration) {
-       //Log.d(TAG, "setRecordDuration: " + String.valueOf(recordDuration));
-        RecordService.recordDuration = recordDuration * 1_000_000;
     }
 
     public static void setVideoQuality(String pref, String q1080p, String q720p) {
@@ -721,48 +457,5 @@ public class RecordService extends Service {
         } else if (pref.equals(q720p)) {
             RecordService.videoQuality = VideoQuality.MED_720P;
         }
-    }
-
-    public static void setCamera(String pref, String back, String front) {
-
-        if (pref.equals(back)) {
-            RecordService.camera = Camera.BACK;
-        } else if (pref.equals(front)) {
-            RecordService.camera = Camera.FRONT;
-        }
-    }
-
-    public static void setSaveOnTipover(boolean saveOnTipover) {
-       //Log.d(TAG, "setSaveOnTipover: " + String.valueOf(saveOnTipover));
-        RecordService.saveOnTipover = saveOnTipover;
-    }
-
-    public static void setTipoverThreshold(String pref, String low, String medium, String high) {
-       //Log.d(TAG, "setTipoverThreshold: " + pref);
-        if (pref.equals(low)) {
-//            RecordService.tipoverThreshold = TipoverThreshold.LOW;
-            gThreshold = G_THRESHOLD_LOW;
-        } else if (pref.equals(medium)) {
-//            RecordService.tipoverThreshold = TipoverThreshold.MEDIUM;
-            gThreshold = G_THRESHOLD_MEDIUM;
-        } else if (pref.equals(high)) {
-//            RecordService.tipoverThreshold = TipoverThreshold.HIGH;
-            gThreshold = G_THRESHOLD_HIGH;
-        }
-    }
-
-    public static void setTipoverTimeout(Long tipoverTimeout) {
-        RecordService.tipoverTimeout = tipoverTimeout * 1_000_000_000;
-        //Log.d(TAG, "setTipoverTimeout: " + String.valueOf(RecordService.tipoverTimeout));
-    }
-
-    public static void setSaveLocation(boolean saveLocation) {
-       //Log.d(TAG, "setSaveLocation: " + String.valueOf(saveLocation));
-        RecordService.saveLocation = saveLocation;
-    }
-
-    public static void setBackupToDrive(boolean backupToDrive) {
-       //Log.d(TAG, "setBackupToDrive: " + String.valueOf(backupToDrive));
-        RecordService.backupToDrive = backupToDrive;
     }
 }

@@ -1,9 +1,11 @@
 package com.example.joshua.stereoonair;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.net.NetworkInfo;
 import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
@@ -14,12 +16,12 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.view.View;
 import android.widget.Button;
 import android.util.Log;
 import android.widget.TextView;
 
-import java.net.InetAddress;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -36,6 +38,7 @@ public class MainActivity extends Activity {
     private HashMap<String, String> buddies = new HashMap<>();
     private Collection<WifiP2pDevice> peers;
     private boolean isServiceDiscoverySetup = false;
+    private RecordService recordService = null;
 
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
 
@@ -106,6 +109,59 @@ public class MainActivity extends Activity {
         }
     }
 
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+
+            Log.d(TAG, "onServiceConnected");
+
+            RecordService.RecordServiceBinder binder = (RecordService.RecordServiceBinder) service;
+            recordService = binder.getService();
+
+            recordService.registerOnStartRecordCallback(onStartRecordCallback);
+            recordService.registerOnStopRecordCallback(onStopRecordCallback);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+
+            //Log.d(TAG, "onServiceDisconnected");
+
+            recordService = null;
+        }
+    };
+
+    private RecordService.OnStartRecordCallback onStartRecordCallback = new RecordService.OnStartRecordCallback() {
+
+        @Override
+        void onStartRecord() {
+            Log.d(TAG, "onStartRecordCallback onStartRecord");
+        }
+    };
+
+    private RecordService.OnStopRecordCallback onStopRecordCallback = new RecordService.OnStopRecordCallback() {
+
+        @Override
+        void onStopRecord() {
+            Log.d(TAG, "onStopRecordCallback onStopRecord");
+        }
+    };
+
+    private void startRecording() {
+
+        if (recordService != null
+                && recordService.getRecordState().equals(RecordService.RecordState.STOPPED)) {
+
+            Intent intent = new Intent(this, RecordService.class);
+            startService(intent);
+        }
+    }
+
+    private void stopRecording() {
+        recordService.stopRecording();
+    }
+
     private void discoverPeers() {
 
         manager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
@@ -145,113 +201,20 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void registerService() {
-
-        HashMap<String, String> record = new HashMap<>();
-        record.put("listenport", String.valueOf(SERVER_PORT));
-        record.put("buddyname", receiverBuddyname);
-        record.put("available", "visible");
-        final WifiP2pDnsSdServiceInfo serviceInfo = WifiP2pDnsSdServiceInfo.newInstance("_foo", "_presence._tcp", record);
-        manager.clearLocalServices(channel, new WifiP2pManager.ActionListener() {
-            @Override
-            public void onSuccess() {
-                manager.addLocalService(channel, serviceInfo, new WifiP2pManager.ActionListener() {
-                    @Override
-                    public void onSuccess() {
-                        Log.d(TAG, "addLocalService onSuccess");
-                    }
-
-                    @Override
-                    public void onFailure(int reason) {
-                        Log.d(TAG, "addLocalService onFailure");
-                    }
-                });
-            }
-
-            @Override
-            public void onFailure(int reason) {
-                Log.d(TAG, "clearLocalServices onFailure");
-            }
-        });
-    }
-
-    private void setupServiceDiscovery() {
-
-        WifiP2pManager.DnsSdServiceResponseListener serviceResponseListener = new WifiP2pManager.DnsSdServiceResponseListener() {
-            @Override
-            public void onDnsSdServiceAvailable(String instanceName, String registrationType, WifiP2pDevice srcDevice) {
-                Log.d(TAG, "discoverService onDnsSdServiceAvailable: " + instanceName);
-//                srcDevice.deviceName = buddies.containsKey(srcDevice.deviceAddress) ? buddies.get(srcDevice.deviceAddress) : srcDevice.deviceName;
-            }
-        };
-
-        WifiP2pManager.DnsSdTxtRecordListener txtRecordListener = new WifiP2pManager.DnsSdTxtRecordListener() {
-            @Override
-            public void onDnsSdTxtRecordAvailable(String fullDomainName, Map<String, String> txtRecordMap, WifiP2pDevice srcDevice) {
-                Log.d(TAG, "discoverService onDnsSdTxtRecordAvailable: " + txtRecordMap.toString());
-                buddies.put(srcDevice.deviceAddress, txtRecordMap.get("buddyname"));
-
-                TextView serviceTextview = findViewById(R.id.service_textview);
-                serviceTextview.setText(buddies.toString());
-            }
-        };
-
-        manager.setDnsSdResponseListeners(channel, serviceResponseListener, txtRecordListener);
-
-        manager.clearServiceRequests(channel, new WifiP2pManager.ActionListener() {
-            @Override
-            public void onSuccess() {
-                manager.addServiceRequest(channel, WifiP2pDnsSdServiceRequest.newInstance(), new WifiP2pManager.ActionListener() {
-                    @Override
-                    public void onSuccess() {
-                        Log.d(TAG, "addServiceRequest onSuccess");
-                        isServiceDiscoverySetup = true;
-                    }
-
-                    @Override
-                    public void onFailure(int reason) {
-                        Log.d(TAG, "addServiceRequest onFailure");
-                    }
-                });
-            }
-
-            @Override
-            public void onFailure(int reason) {
-                Log.d(TAG, "clearServiceRequests onFailure");
-            }
-        });
-    }
-
-    private void discoverService() {
-
-        if (!isServiceDiscoverySetup) {
-            setupServiceDiscovery();
-        }
-
-        manager.discoverServices(channel, new WifiP2pManager.ActionListener() {
-            @Override
-            public void onSuccess() {
-                Log.d(TAG, "discoverServices onSuccess");
-            }
-
-            @Override
-            public void onFailure(int reason) {
-                Log.d(TAG, "discoverServices onFailure");
-            }
-        });
-    }
-
     private void checkConnection() {
         manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
             @Override
             public void onConnectionInfoAvailable(WifiP2pInfo info) {
                 Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
+                TextView connectionTextView = findViewById(R.id.connection_textview);
+                connectionTextView.setText(info.toString());
             }
         });
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
@@ -286,6 +249,17 @@ public class MainActivity extends Activity {
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Log.d(TAG, "cameraButton onClick");
+                startRecording();
+            }
+        });
+
+        final Button stopCameraButton = findViewById(R.id.stop_camera_button);
+        stopCameraButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.d(TAG, "stopCameraButton onClick");
+                stopRecording();
             }
         });
 
@@ -296,13 +270,8 @@ public class MainActivity extends Activity {
             }
         });
 
-        final Button connectButton = findViewById(R.id.connect_button);
-        connectButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                connectToPeer();
-            }
-        });
+        Intent intent = new Intent(this, RecordService.class);
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
 
         intentFilter = new IntentFilter();
         intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
@@ -325,5 +294,13 @@ public class MainActivity extends Activity {
 
         super.onPause();
         unregisterReceiver(receiver);
+    }
+
+    @Override
+    public void onDestroy() {
+
+        //Log.d(TAG, "onDestroy");
+        unbindService(serviceConnection);
+        super.onDestroy();
     }
 }
