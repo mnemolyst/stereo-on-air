@@ -258,23 +258,17 @@ public class CameraService extends Service {
 
     private void openSocket() {
 
-        new Thread(new Runnable() {
-
-            @Override
-            public void run() {
-
-                try {
-                    socket = new Socket();
-                    socket.bind(null);
-                    socket.connect(new InetSocketAddress(receiverAddress, port));
-                    DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
-                    outputStream.writeBytes("hello world");
-                    outputStream.flush();
-                } catch (IOException exception) {
-                    Log.e(TAG, exception.getMessage());
-                }
-            }
-        }).run();
+        Log.d(TAG, "cameraService openSocket thread id: " + String.valueOf(Thread.currentThread().getId()));
+        try {
+            socket = new Socket();
+            socket.bind(null);
+            socket.connect(new InetSocketAddress(receiverAddress, port));
+            DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
+            outputStream.writeBytes("hello world");
+            outputStream.flush();
+        } catch (IOException exception) {
+            Log.e(TAG, exception.getMessage());
+        }
     }
 
     private CameraCaptureSession.StateCallback captureSessionStateCallback = new CameraCaptureSession.StateCallback() {

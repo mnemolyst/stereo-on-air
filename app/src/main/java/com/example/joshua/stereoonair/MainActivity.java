@@ -111,23 +111,19 @@ public class MainActivity extends Activity {
 
         Intent intent = new Intent(this, ReceiverService.class);
         startService(intent);
-//        try {
-//            receiverService.openSocket();
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
     }
 
     private void setServerAddress(String address) {
         cameraService.setReceiverAddress(address);
     }
 
-    private void startClient() {
-//        try {
-//            cameraService.openSocket();
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
+    private void startCamera() {
+
+        if (cameraService.getState().equals(CameraService.State.STOPPED)) {
+
+            Intent intent = new Intent(this, CameraService.class);
+            startService(intent);
+        }
     }
 
     private ServiceConnection cameraConnection = new ServiceConnection() {
@@ -186,15 +182,6 @@ public class MainActivity extends Activity {
             Log.d(TAG, "onFrameReceivedCallback.onFrameReceived");
         }
     };
-
-    private void startCamera() {
-
-        if (cameraService.getState().equals(CameraService.State.STOPPED)) {
-
-            Intent intent = new Intent(this, CameraService.class);
-            startService(intent);
-        }
-    }
 
     private void stopCamera() {
         cameraService.stopCamera();
@@ -267,6 +254,7 @@ public class MainActivity extends Activity {
         super.onResume();
         registerReceiver(receiver, intentFilter);
 //        discoverPeers();
+        Log.d(TAG, "mainActivity thread id: " + String.valueOf(Thread.currentThread().getId()));
         checkConnection();
     }
 

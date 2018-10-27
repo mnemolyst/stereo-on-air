@@ -40,25 +40,32 @@ public class ReceiverService extends Service {
         onFrameReceivedCallback = callback;
     }
 
-    public void openSocket() {
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
 
         new Thread(new Runnable() {
-
             @Override
             public void run() {
-
-                try {
-                    serverSocket = new ServerSocket(MainActivity.port);
-                    socket = serverSocket.accept();
-                    DataInputStream inputStream = new DataInputStream(socket.getInputStream());
-                    byte[] buffer = new byte[128];
-                    int numBytes = inputStream.read(buffer);
-                    Log.d(TAG, "bytes length: " + String.valueOf(numBytes));
-                    Log.d(TAG, String.valueOf(buffer));
-                } catch (IOException exception) {
-                    Log.e(TAG, exception.getMessage());
-                }
+                openSocket();
             }
         }).run();
+
+        return START_NOT_STICKY;
+    }
+
+    public void openSocket() {
+
+        Log.d(TAG, "receiverService openSocket thread id: " + String.valueOf(Thread.currentThread().getId()));
+        try {
+            serverSocket = new ServerSocket(MainActivity.port);
+            socket = serverSocket.accept();
+            DataInputStream inputStream = new DataInputStream(socket.getInputStream());
+            byte[] buffer = new byte[128];
+            int numBytes = inputStream.read(buffer);
+            Log.d(TAG, "bytes length: " + String.valueOf(numBytes));
+            Log.d(TAG, String.valueOf(buffer));
+        } catch (IOException exception) {
+            Log.e(TAG, exception.getMessage());
+        }
     }
 }
