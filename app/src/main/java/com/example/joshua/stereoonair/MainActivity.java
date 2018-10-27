@@ -7,14 +7,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.net.NetworkInfo;
-import android.net.wifi.WpsInfo;
-import android.net.wifi.p2p.WifiP2pConfig;
-import android.net.wifi.p2p.WifiP2pDevice;
-import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
-import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
-import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.view.View;
@@ -22,42 +16,43 @@ import android.widget.Button;
 import android.util.Log;
 import android.widget.TextView;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
 
 public class MainActivity extends Activity {
 
     private final static String TAG = "MainActivity";
-    private String receiverBuddyname;
     private WifiP2pManager manager;
     private WifiP2pManager.Channel channel;
     private BroadcastReceiver receiver;
     private IntentFilter intentFilter;
-    private final static int SERVER_PORT = 4545;
-    private HashMap<String, String> buddies = new HashMap<>();
-    private Collection<WifiP2pDevice> peers;
-    private boolean isServiceDiscoverySetup = false;
-    private RecordService recordService = null;
+    private CameraService cameraService = null;
+    private ReceiverService receiverService = null;
+
+    enum Role {
+        CAMERA, RECEIVER
+    }
+    private Role myRole;
+    private ServerSocket serverSocket;
+    private Socket socket;
+    public final static int port = 8353;
 
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
 
         private WifiP2pManager manager;
         private WifiP2pManager.Channel channel;
         private Activity activity;
-        private WifiP2pManager.PeerListListener peerListListener;
 
         public BroadcastReceiver(
                 WifiP2pManager manager,
                 WifiP2pManager.Channel channel,
-                WifiP2pManager.PeerListListener peerListListener,
                 Activity activity) {
 
             super();
             this.manager = manager;
             this.channel = channel;
             this.activity = activity;
-            this.peerListListener = peerListListener;
         }
 
         @Override
@@ -69,19 +64,14 @@ public class MainActivity extends Activity {
 
                 int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
                 if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                    Log.d(TAG, "wifi p2p enabled");
+                    Log.d(TAG, "wifi p2p state changed: enabled");
                 } else {
-                    Log.d(TAG, "wifi p2p not enabled");
+                    Log.d(TAG, "wifi p2p state changed: not enabled");
                 }
-            } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
-
-                Log.d(TAG, "wifi p2p peers changed");
-                manager.requestPeers(channel, peerListListener);
-
             } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
                 Log.d(TAG, "wifi p2p connection changed");
 
-                NetworkInfo networkInfo = (NetworkInfo) intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+                NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
 
                 if (networkInfo.isConnected()) {
                     Log.d(TAG, "network isConnected");
@@ -89,14 +79,22 @@ public class MainActivity extends Activity {
                     manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
                         @Override
                         public void onConnectionInfoAvailable(WifiP2pInfo info) {
-                            Log.d(TAG, "onConnectionInfoAvailable");
+                            Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
 
-                            String groupOwnerAddress = info.groupOwnerAddress.getHostAddress();
+                            String receiverAddress = info.groupOwnerAddress.getHostAddress();
 
                             if (info.groupFormed && info.isGroupOwner) {
-                                Log.d(TAG, "I am the group owner. Owner: " + groupOwnerAddress);
+                                myRole = Role.RECEIVER;
+                                Log.d(TAG, "I am the group owner. Owner: " + receiverAddress);
+
+                                startServer();
                             } else if (info.groupFormed) {
-                                Log.d(TAG, "I am not the group owner. Owner: " + groupOwnerAddress);
+                                myRole = Role.CAMERA;
+                                Log.d(TAG, "I am not the group owner. Owner: " + receiverAddress);
+
+                                setServerAddress(receiverAddress);
+//                                startClient();
+                                startCamera();
                             }
 
                         }
@@ -109,99 +107,101 @@ public class MainActivity extends Activity {
         }
     }
 
-    private ServiceConnection serviceConnection = new ServiceConnection() {
+    private void startServer() {
+
+        Intent intent = new Intent(this, ReceiverService.class);
+        startService(intent);
+//        try {
+//            receiverService.openSocket();
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+    }
+
+    private void setServerAddress(String address) {
+        cameraService.setReceiverAddress(address);
+    }
+
+    private void startClient() {
+//        try {
+//            cameraService.openSocket();
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+    }
+
+    private ServiceConnection cameraConnection = new ServiceConnection() {
 
         @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
+        public void onServiceConnected(ComponentName name, IBinder binder) {
 
-            Log.d(TAG, "onServiceConnected");
+            Log.d(TAG, "onServiceConnected: " + name.toString());
 
-            RecordService.RecordServiceBinder binder = (RecordService.RecordServiceBinder) service;
-            recordService = binder.getService();
-
-            recordService.registerOnStartRecordCallback(onStartRecordCallback);
-            recordService.registerOnStopRecordCallback(onStopRecordCallback);
+            cameraService = ((CameraService.cameraServiceBinder) binder).getService();
+            cameraService.registerOnStartCameraCallback(onStartCameraCallback);
+            cameraService.registerOnStopCameraCallback(onStopCameraCallback);
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
 
             //Log.d(TAG, "onServiceDisconnected");
-
-            recordService = null;
         }
     };
 
-    private RecordService.OnStartRecordCallback onStartRecordCallback = new RecordService.OnStartRecordCallback() {
+    private ServiceConnection receiverConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+
+            receiverService = ((ReceiverService.receiverServiceBinder) binder).getService();
+            receiverService.registerOnFrameReceivedCallback(onFrameReceivedCallback);
+        }
 
         @Override
-        void onStartRecord() {
-            Log.d(TAG, "onStartRecordCallback onStartRecord");
+        public void onServiceDisconnected(ComponentName name) {
+
         }
     };
 
-    private RecordService.OnStopRecordCallback onStopRecordCallback = new RecordService.OnStopRecordCallback() {
+    private CameraService.OnStartCameraCallback onStartCameraCallback = new CameraService.OnStartCameraCallback() {
 
         @Override
-        void onStopRecord() {
-            Log.d(TAG, "onStopRecordCallback onStopRecord");
+        void onStartCamera() {
+            Log.d(TAG, "onStartCameraCallback onStartCamera");
         }
     };
 
-    private void startRecording() {
+    private CameraService.OnStopCameraCallback onStopCameraCallback = new CameraService.OnStopCameraCallback() {
 
-        if (recordService != null
-                && recordService.getRecordState().equals(RecordService.RecordState.STOPPED)) {
+        @Override
+        void onStopCamera() {
+            Log.d(TAG, "onStopCameraCallback onStopCamera");
+        }
+    };
 
-            Intent intent = new Intent(this, RecordService.class);
+    private ReceiverService.OnFrameReceivedCallback onFrameReceivedCallback = new ReceiverService.OnFrameReceivedCallback() {
+
+        @Override
+        void onFrameReceived() {
+            Log.d(TAG, "onFrameReceivedCallback.onFrameReceived");
+        }
+    };
+
+    private void startCamera() {
+
+        if (cameraService.getState().equals(CameraService.State.STOPPED)) {
+
+            Intent intent = new Intent(this, CameraService.class);
             startService(intent);
         }
     }
 
-    private void stopRecording() {
-        recordService.stopRecording();
-    }
-
-    private void discoverPeers() {
-
-        manager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
-
-            @Override
-            public void onSuccess() {
-                Log.d(TAG, "discoverPeers success");
-            }
-
-            @Override
-            public void onFailure(int reason) {
-                Log.d(TAG, "discoverPeers failure");
-            }
-        });
-    }
-
-    private void connectToPeer() {
-
-        if (! buddies.isEmpty()) {
-            WifiP2pConfig config = new WifiP2pConfig();
-            HashMap.Entry first = buddies.entrySet().iterator().next();
-            String addr = String.valueOf(first.getKey());
-            Log.d(TAG, "connectToPeer addr: " + addr);
-            config.deviceAddress = String.valueOf(first.getKey());
-            config.wps.setup = WpsInfo.PBC;
-            manager.connect(channel, config, new WifiP2pManager.ActionListener() {
-                @Override
-                public void onSuccess() {
-                    Log.d(TAG, "connect onSuccess");
-                }
-
-                @Override
-                public void onFailure(int reason) {
-                    Log.d(TAG, "connect onFailure: " + String.valueOf(reason));
-                }
-            });
-        }
+    private void stopCamera() {
+        cameraService.stopCamera();
     }
 
     private void checkConnection() {
+
         manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
             @Override
             public void onConnectionInfoAvailable(WifiP2pInfo info) {
@@ -220,37 +220,15 @@ public class MainActivity extends Activity {
 
         manager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         channel = manager.initialize(this, getMainLooper(), null);
-        receiverBuddyname = "Stereo Receiver " + (int)(Math.random() * 1000);
 
-        WifiP2pManager.PeerListListener peerListListener = new WifiP2pManager.PeerListListener() {
-
-            @Override
-            public void onPeersAvailable(WifiP2pDeviceList deviceList) {
-                peers = deviceList.getDeviceList();
-                Log.d(TAG, "onPeersAvailable");
-                Log.d(TAG, "isEmpty: " + String.valueOf(peers.isEmpty()));
-                String peerText;
-                if (peers.isEmpty()) {
-                    peerText = "No peers";
-                } else {
-                    peerText = "";
-                    for (WifiP2pDevice device : peers) {
-                        peerText = peerText.concat("address: " + device.deviceAddress + " name: " + device.deviceName);
-                    }
-                }
-                TextView peerTextview = findViewById(R.id.peer_textview);
-                peerTextview.setText(peerText);
-            }
-        };
-
-        receiver = new BroadcastReceiver(manager, channel, peerListListener, MainActivity.this);
+        receiver = new BroadcastReceiver(manager, channel, MainActivity.this);
 
         final Button cameraButton = findViewById(R.id.camera_button);
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 Log.d(TAG, "cameraButton onClick");
-                startRecording();
+                startCamera();
             }
         });
 
@@ -259,7 +237,7 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 Log.d(TAG, "stopCameraButton onClick");
-                stopRecording();
+                stopCamera();
             }
         });
 
@@ -270,8 +248,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        Intent intent = new Intent(this, RecordService.class);
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+        Intent cameraIntent = new Intent(this, CameraService.class);
+        bindService(cameraIntent, cameraConnection, Context.BIND_AUTO_CREATE);
+
+        Intent receiverIntent = new Intent(this, ReceiverService.class);
+        bindService(receiverIntent, receiverConnection, Context.BIND_AUTO_CREATE);
 
         intentFilter = new IntentFilter();
         intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
@@ -300,7 +281,7 @@ public class MainActivity extends Activity {
     public void onDestroy() {
 
         //Log.d(TAG, "onDestroy");
-        unbindService(serviceConnection);
         super.onDestroy();
+        unbindService(cameraConnection);
     }
 }

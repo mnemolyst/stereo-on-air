@@ -1,7 +1,6 @@
 package com.example.joshua.stereoonair;
 
 import android.Manifest;
-import android.app.IntentService;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -9,7 +8,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.hardware.camera2.CameraAccessException;
@@ -24,32 +22,31 @@ import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.os.Binder;
-import android.os.Build;
 import android.os.IBinder;
-import android.preference.PreferenceManager;
 import android.util.Log;
 import android.view.Surface;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
-/**
- * An {@link IntentService} subclass for handling asynchronous task requests in
- * a service on a separate handler thread.
- */
-public class RecordService extends Service {
+import static com.example.joshua.stereoonair.MainActivity.port;
+
+public class CameraService extends Service {
 
     private final static String TAG = "CameraService";
     private final static int ONGOING_NOTIFICATION_ID = 1;
 
-    enum RecordState {
+    enum State {
         STOPPING, STOPPED, STARTING, STARTED
     }
     enum VideoQuality {
         HIGH_1080P, MED_720P
     }
-    private RecordState recordState = RecordState.STOPPED;
+    private State state = State.STOPPED;
     private static VideoQuality videoQuality = VideoQuality.HIGH_1080P;
     private CameraDevice cameraDevice;
     private CaptureRequest.Builder captureRequestBuilder;
@@ -58,31 +55,33 @@ public class RecordService extends Service {
     private Surface videoInputSurface;
     private MediaFormat videoFormat;
     private Integer sensorOrientation = 0;
+    private Socket socket;
+    private String receiverAddress;
 
-    private OnStartRecordCallback onStartRecordCallback;
-    private OnStopRecordCallback onStopRecordCallback;
+    private OnStartCameraCallback onStartCameraCallback;
+    private OnStopCameraCallback onStopCameraCallback;
 
-    static abstract class OnStartRecordCallback {
-        abstract void onStartRecord();
+    static abstract class OnStartCameraCallback {
+        abstract void onStartCamera();
     }
 
-    static abstract class OnStopRecordCallback {
-        abstract void onStopRecord();
+    static abstract class OnStopCameraCallback {
+        abstract void onStopCamera();
     }
 
-    public void registerOnStartRecordCallback(OnStartRecordCallback callback) {
-        onStartRecordCallback = callback;
+    public void registerOnStartCameraCallback(OnStartCameraCallback callback) {
+        onStartCameraCallback = callback;
     }
 
-    public void registerOnStopRecordCallback(OnStopRecordCallback callback) {
-        onStopRecordCallback = callback;
+    public void registerOnStopCameraCallback(OnStopCameraCallback callback) {
+        onStopCameraCallback = callback;
     }
 
-    class RecordServiceBinder extends Binder {
+    class cameraServiceBinder extends Binder {
 
-        RecordService getService() {
+        CameraService getService() {
 
-            return RecordService.this;
+            return CameraService.this;
         }
     }
 
@@ -90,8 +89,6 @@ public class RecordService extends Service {
     public void onCreate() {
 
         //Log.d(TAG, "onCreate");
-
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
     }
 
     @Override
@@ -99,36 +96,7 @@ public class RecordService extends Service {
 
         Log.d(TAG, "onStartCommand");
 
-        recordState = RecordState.STOPPED;
-        startRecording();
-
-        return START_NOT_STICKY;
-    }
-
-    @Override
-    public IBinder onBind(Intent intent) {
-
-        //Log.d(TAG, "onBind");
-        return new RecordServiceBinder();
-    }
-
-    @Override
-    public boolean onUnbind(Intent intent) {
-
-        //Log.d(TAG, "onUnbind");
-        return false;
-    }
-
-    @Override
-    public void onDestroy() {
-
-       //Log.d(TAG, "onDestroy");
-        releaseResources();
-    }
-
-    private void startRecording() {
-
-       //Log.d(TAG, "startRecording");
+        state = State.STOPPED;
 
         new Thread(new Runnable() {
 
@@ -139,8 +107,6 @@ public class RecordService extends Service {
                     stopSelf();
                     return;
                 }
-
-//                recordAudio = ActivityCompat.checkSelfPermission(RecordService.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
 
                 CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
 
@@ -164,6 +130,29 @@ public class RecordService extends Service {
                 }
             }
         }).run();
+
+        return START_NOT_STICKY;
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+
+        //Log.d(TAG, "onBind");
+        return new cameraServiceBinder();
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+
+        //Log.d(TAG, "onUnbind");
+        return false;
+    }
+
+    @Override
+    public void onDestroy() {
+
+       //Log.d(TAG, "onDestroy");
+        releaseResources();
     }
 
     private CameraDevice.StateCallback cameraStateCallback = new CameraDevice.StateCallback() {
@@ -174,32 +163,32 @@ public class RecordService extends Service {
            //Log.d(TAG, "cameraStateCallback.onOpened");
 
             cameraDevice = camera;
-            recordState = RecordState.STARTING;
+            state = State.STARTING;
+            videoFormat = null;
             prepareForRecording();
         }
 
         @Override
         public void onDisconnected(CameraDevice camera) {
 
-           //Log.d(TAG, "cameraStateCallback.onDisconnected");
+            Log.d(TAG, "cameraStateCallback.onDisconnected");
             cameraStopped();
         }
 
         @Override
         public void onError(CameraDevice camera, int error) {
 
-           //Log.e(TAG, "cameraStateCallback.onError");
+            Log.e(TAG, "cameraStateCallback.onError");
             stopSelf();
         }
     };
 
     private void prepareForRecording() {
 
-        videoFormat = null;
-
         try {
             startVideoCodec();
             startCamera();
+            openSocket();
         } catch (IOException e) {
             e.printStackTrace();
             stopSelf();
@@ -211,7 +200,7 @@ public class RecordService extends Service {
 
     private void startVideoCodec() throws IOException {
 
-        MediaFormat format = null;
+        MediaFormat format;
         if (videoQuality == VideoQuality.HIGH_1080P) {
             format = MediaFormat.createVideoFormat("video/avc", 1920, 1080);
         } else if (videoQuality == VideoQuality.MED_720P) {
@@ -225,7 +214,7 @@ public class RecordService extends Service {
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         format.setInteger(MediaFormat.KEY_BIT_RATE, 5_000_000);
         format.setString(MediaFormat.KEY_FRAME_RATE, null);
-        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 5);
 
         MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
         String codecName = codecList.findEncoderForFormat(format);
@@ -242,7 +231,13 @@ public class RecordService extends Service {
     private void startCamera() {
 
         if (cameraDevice == null) {
-           //Log.e(TAG, "cameraDevice is null");
+            Log.e(TAG, "cameraDevice is null");
+            stopSelf();
+            return;
+        }
+
+        if (videoInputSurface == null) {
+            Log.e(TAG, "videoInputSurface is null");
             stopSelf();
             return;
         }
@@ -257,16 +252,37 @@ public class RecordService extends Service {
         }
     }
 
+    public void setReceiverAddress(String address) {
+        receiverAddress = address;
+    }
+
+    private void openSocket() {
+
+        new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                try {
+                    socket = new Socket();
+                    socket.bind(null);
+                    socket.connect(new InetSocketAddress(receiverAddress, port));
+                    DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
+                    outputStream.writeBytes("hello world");
+                    outputStream.flush();
+                } catch (IOException exception) {
+                    Log.e(TAG, exception.getMessage());
+                }
+            }
+        }).run();
+    }
+
     private CameraCaptureSession.StateCallback captureSessionStateCallback = new CameraCaptureSession.StateCallback() {
 
         @Override
         public void onConfigured(CameraCaptureSession session) {
 
             cameraCaptureSession = session;
-
-            /*HandlerThread thread = new HandlerThread("CameraPreview");
-            thread.start();
-            Handler backgroundHandler = new Handler(thread.getLooper());*/
 
             try {
                 session.setRepeatingRequest(captureRequestBuilder.build(), null, null);
@@ -278,14 +294,13 @@ public class RecordService extends Service {
 
         @Override
         public void onConfigureFailed(CameraCaptureSession session) {
-           //Log.e(TAG, "captureSessionStateCallback.onConfigureFailed");
+            Log.e(TAG, "captureSessionStateCallback.onConfigureFailed");
             stopSelf();
         }
 
         @Override
         public void onClosed(CameraCaptureSession session) {
-
-           //Log.d(TAG, "captureSessionStateCallback.onClosed");
+            Log.d(TAG, "captureSessionStateCallback.onClosed");
             cameraStopped();
         }
     };
@@ -302,20 +317,20 @@ public class RecordService extends Service {
                 return;
             }
 
-            if (recordState == RecordState.STARTING) {
+            if (state == State.STARTING) {
 
-                recordState = RecordState.STARTED;
+                state = State.STARTED;
 
-                if (onStartRecordCallback != null) {
-                    onStartRecordCallback.onStartRecord();
+                if (onStartCameraCallback != null) {
+                    onStartCameraCallback.onStartCamera();
                 }
             }
 
-            if (recordState != RecordState.STARTED) {
+            if (state != State.STARTED) {
                 return;
             }
 
-            ByteBuffer outputBuffer = null;
+            ByteBuffer outputBuffer;
             try {
                 outputBuffer = codec.getOutputBuffer(index);
             } catch (IllegalStateException e) {
@@ -342,7 +357,7 @@ public class RecordService extends Service {
 
         @Override
         public void onError(MediaCodec codec, MediaCodec.CodecException e) {
-           //Log.e(TAG, "MediaCodec.Callback.onError", e);
+            Log.e(TAG, "MediaCodec.Callback.onError", e);
         }
 
         @Override
@@ -389,22 +404,15 @@ public class RecordService extends Service {
         startForeground(ONGOING_NOTIFICATION_ID, notification);
     }
 
-    RecordState getRecordState() {
-        return recordState;
+    State getState() {
+        return state;
     }
 
-    void discardRecording() {
+    void stopCamera() {
 
-        stopRecording();
-    }
+        if (state.equals(State.STARTED)) {
 
-    void stopRecording() {
-
-       //Log.d(TAG, "stopRecording");
-
-        if (recordState.equals(RecordState.STARTED)) {
-
-            recordState = RecordState.STOPPING;
+            state = State.STOPPING;
             videoCodec.signalEndOfInputStream();
 
             try {
@@ -422,17 +430,17 @@ public class RecordService extends Service {
        //Log.d(TAG, "cameraStopped");
         releaseResources();
 
-        if (recordState.equals(RecordState.STARTED)) {
+        if (state.equals(State.STARTED)) {
 
-            recordState = RecordState.STOPPING;
+            state = State.STOPPING;
 //            videoCodec.signalEndOfInputStream();
         }
 
-        if (onStopRecordCallback != null) {
-            onStopRecordCallback.onStopRecord();
+        if (onStopCameraCallback != null) {
+            onStopCameraCallback.onStopCamera();
         }
 
-        recordState = RecordState.STOPPED;
+        state = State.STOPPED;
         stopForeground(true);
         stopSelf();
     }
@@ -453,9 +461,9 @@ public class RecordService extends Service {
     public static void setVideoQuality(String pref, String q1080p, String q720p) {
        //Log.d(TAG, "setVideoQuality: " + pref);
         if (pref.equals(q1080p)) {
-            RecordService.videoQuality = VideoQuality.HIGH_1080P;
+            CameraService.videoQuality = VideoQuality.HIGH_1080P;
         } else if (pref.equals(q720p)) {
-            RecordService.videoQuality = VideoQuality.MED_720P;
+            CameraService.videoQuality = VideoQuality.MED_720P;
         }
     }
 }
