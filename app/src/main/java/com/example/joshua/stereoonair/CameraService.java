@@ -22,7 +22,10 @@ import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.os.Binder;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
 
@@ -98,38 +101,47 @@ public class CameraService extends Service {
 
         state = State.STOPPED;
 
-        new Thread(new Runnable() {
+        HandlerThread thread = new HandlerThread("receiverThread");
+        thread.start();
+        Looper looper = thread.getLooper();
+        Handler handler = new Handler(looper);
+
+        Runnable runnable = new Runnable() {
 
             public void run() {
 
-                if (getApplicationContext().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED) {
-                    Log.e(TAG, "No camera permission!");
-                    stopSelf();
-                    return;
-                }
-
-                CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-
-                try {
-
-                    String[] cameraIdList = cameraManager.getCameraIdList();
-                    for (String id : cameraIdList) {
-
-                        CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
-                        int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                        if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
-
-                            sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
-
-                            cameraManager.openCamera(id, cameraStateCallback, null);
-                            break;
-                        }
-                    }
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
+                openSocket();
+//                Log.d(TAG, "onStartCommand new thread id: " + String.valueOf(Thread.currentThread().getId()));
+//                if (getApplicationContext().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED) {
+//                    Log.e(TAG, "No camera permission!");
+//                    stopSelf();
+//                    return;
+//                }
+//
+//                CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+//
+//                try {
+//
+//                    String[] cameraIdList = cameraManager.getCameraIdList();
+//                    for (String id : cameraIdList) {
+//
+//                        CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
+//                        int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+//                        if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+//
+//                            sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+//
+//                            cameraManager.openCamera(id, cameraStateCallback, null);
+//                            break;
+//                        }
+//                    }
+//                } catch (CameraAccessException e) {
+//                    e.printStackTrace();
+//                }
             }
-        }).run();
+        };
+
+        handler.post(runnable);
 
         return START_NOT_STICKY;
     }
@@ -160,7 +172,7 @@ public class CameraService extends Service {
         @Override
         public void onOpened(CameraDevice camera) {
 
-           //Log.d(TAG, "cameraStateCallback.onOpened");
+            Log.d(TAG, "cameraStateCallback.onOpened thread id: " + String.valueOf(Thread.currentThread().getId()));
 
             cameraDevice = camera;
             state = State.STARTING;
@@ -264,8 +276,10 @@ public class CameraService extends Service {
             socket.bind(null);
             socket.connect(new InetSocketAddress(receiverAddress, port));
             DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
-            outputStream.writeBytes("hello world");
+            String s = "hello world";
+            outputStream.write(s.getBytes("UTF-8"));
             outputStream.flush();
+            Log.d(TAG, "openSocket: bytes written");
         } catch (IOException exception) {
             Log.e(TAG, exception.getMessage());
         }
