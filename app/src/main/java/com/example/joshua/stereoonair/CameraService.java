@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -17,6 +18,9 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
@@ -26,8 +30,11 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
 import android.util.Log;
+import android.util.Size;
 import android.view.Surface;
+import android.view.SurfaceView;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -35,6 +42,9 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static com.example.joshua.stereoonair.MainActivity.port;
 
@@ -52,17 +62,26 @@ public class CameraService extends Service {
     private State state = State.STOPPED;
     private static VideoQuality videoQuality = VideoQuality.HIGH_1080P;
     private CameraDevice cameraDevice;
+    private SurfaceView surfaceView;
     private CaptureRequest.Builder captureRequestBuilder;
     private CameraCaptureSession cameraCaptureSession;
     private MediaCodec videoCodec;
+    private int outputFormat = ImageFormat.YUV_420_888;
+    private ImageReader imageReader;
     private Surface videoInputSurface;
     private MediaFormat videoFormat;
     private Integer sensorOrientation = 0;
+    private StreamConfigurationMap configurationMap;
     private Socket socket;
     private String receiverAddress;
+    private Handler cameraHandler;
+    private Handler networkHandler;
+    private Handler uiHandler;
+    private ArrayBlockingQueue<ByteBuffer> blockingQueue;
 
     private OnStartCameraCallback onStartCameraCallback;
     private OnStopCameraCallback onStopCameraCallback;
+    private ReceiverService.OnFrameReceivedCallback onFrameReceivedCallback;
 
     static abstract class OnStartCameraCallback {
         abstract void onStartCamera();
@@ -70,6 +89,10 @@ public class CameraService extends Service {
 
     static abstract class OnStopCameraCallback {
         abstract void onStopCamera();
+    }
+
+    public void registerOnFrameReceivedCallback(ReceiverService.OnFrameReceivedCallback callback) {
+        onFrameReceivedCallback = callback;
     }
 
     public void registerOnStartCameraCallback(OnStartCameraCallback callback) {
@@ -101,47 +124,25 @@ public class CameraService extends Service {
 
         state = State.STOPPED;
 
-        HandlerThread thread = new HandlerThread("receiverThread");
-        thread.start();
-        Looper looper = thread.getLooper();
-        Handler handler = new Handler(looper);
+        HandlerThread cameraThread = new HandlerThread("cameraThread");
+        cameraThread.start();
+        cameraHandler = new Handler(cameraThread.getLooper());
 
-        Runnable runnable = new Runnable() {
+        HandlerThread networkThread = new HandlerThread("cameraNetworkThread");
+        networkThread.start();
+        networkHandler = new Handler(networkThread.getLooper());
 
-            public void run() {
-
-                openSocket();
-//                Log.d(TAG, "onStartCommand new thread id: " + String.valueOf(Thread.currentThread().getId()));
-//                if (getApplicationContext().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED) {
-//                    Log.e(TAG, "No camera permission!");
-//                    stopSelf();
-//                    return;
-//                }
-//
-//                CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-//
-//                try {
-//
-//                    String[] cameraIdList = cameraManager.getCameraIdList();
-//                    for (String id : cameraIdList) {
-//
-//                        CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
-//                        int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-//                        if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
-//
-//                            sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
-//
-//                            cameraManager.openCamera(id, cameraStateCallback, null);
-//                            break;
-//                        }
-//                    }
-//                } catch (CameraAccessException e) {
-//                    e.printStackTrace();
-//                }
+        uiHandler = new Handler(Looper.getMainLooper()) {
+            @Override
+            public void handleMessage(Message message) {
+                ByteBuffer buffer = (ByteBuffer) message.obj;
+                onFrameReceivedCallback.onFrameReceived(buffer);
             }
         };
 
-        handler.post(runnable);
+        blockingQueue = new ArrayBlockingQueue<ByteBuffer>(2);
+
+        openCamera();
 
         return START_NOT_STICKY;
     }
@@ -167,12 +168,44 @@ public class CameraService extends Service {
         releaseResources();
     }
 
+    private void openCamera() {
+
+        if (getApplicationContext().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED) {
+            Log.e(TAG, "No camera permission!");
+            stopSelf();
+            return;
+        }
+
+        CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+
+        try {
+
+            String[] cameraIdList = cameraManager.getCameraIdList();
+            for (String id : cameraIdList) {
+
+                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
+                int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+
+                    configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                    sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+                    cameraManager.openCamera(id, cameraStateCallback, null);
+                    break;
+                }
+            }
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+
+    }
+
     private CameraDevice.StateCallback cameraStateCallback = new CameraDevice.StateCallback() {
 
         @Override
         public void onOpened(CameraDevice camera) {
 
-            Log.d(TAG, "cameraStateCallback.onOpened thread id: " + String.valueOf(Thread.currentThread().getId()));
+            Log.d(TAG, "cameraStateCallback.onOpened");
 
             cameraDevice = camera;
             state = State.STARTING;
@@ -197,15 +230,15 @@ public class CameraService extends Service {
 
     private void prepareForRecording() {
 
-        try {
-            startVideoCodec();
+//        try {
+//            startVideoCodec();
             startCamera();
             openSocket();
-        } catch (IOException e) {
-            e.printStackTrace();
-            stopSelf();
-            return;
-        }
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//            stopSelf();
+//            return;
+//        }
 
         notifyForeground();
     }
@@ -248,17 +281,44 @@ public class CameraService extends Service {
             return;
         }
 
-        if (videoInputSurface == null) {
-            Log.e(TAG, "videoInputSurface is null");
-            stopSelf();
-            return;
+//        if (videoInputSurface == null) {
+//            Log.e(TAG, "videoInputSurface is null");
+//            stopSelf();
+//            return;
+//        }
+
+        int[] formats = configurationMap.getOutputFormats();
+        Log.d(TAG, "formats:");
+        for (int i = 0; i < formats.length; i++) {
+            Log.d(TAG, String.valueOf(formats[i]));
         }
+        int smallestWidth = 99_999;
+        int smallestHeight = 99_999;
+//        if (Arrays.asList(formats).contains(outputFormat)) {
+            Size[] sizes = configurationMap.getOutputSizes(outputFormat);
+            for (int i = 0; i < sizes.length; i++) {
+                Size size = sizes[i];
+                if (size.getWidth() < smallestWidth && size.getHeight() < smallestHeight) {
+                    smallestWidth = size.getWidth();
+                    smallestHeight = size.getHeight();
+                }
+            }
+            Log.d(TAG, "Outputting to size: " + smallestWidth + ", " + smallestHeight);
+//        } else {
+//            Log.e(TAG, "outputFormat not supported");
+//            stopSelf();
+//            return;
+//        }
+        imageReader = ImageReader.newInstance(smallestWidth, smallestHeight, outputFormat, 2);
+        imageReader.setOnImageAvailableListener(onImageAvailableListener, cameraHandler);
+        videoInputSurface = imageReader.getSurface();
 
         try {
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
             captureRequestBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+//            videoInputSurface =
             captureRequestBuilder.addTarget(videoInputSurface);
-            cameraDevice.createCaptureSession(Arrays.asList(videoInputSurface), captureSessionStateCallback, null);
+            cameraDevice.createCaptureSession(Arrays.asList(videoInputSurface), captureSessionStateCallback, cameraHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -271,19 +331,63 @@ public class CameraService extends Service {
     private void openSocket() {
 
         Log.d(TAG, "cameraService openSocket thread id: " + String.valueOf(Thread.currentThread().getId()));
-        try {
-            socket = new Socket();
-            socket.bind(null);
-            socket.connect(new InetSocketAddress(receiverAddress, port));
-            DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
-            String s = "hello world";
-            outputStream.write(s.getBytes("UTF-8"));
-            outputStream.flush();
-            Log.d(TAG, "openSocket: bytes written");
-        } catch (IOException exception) {
-            Log.e(TAG, exception.getMessage());
-        }
+//        if (receiverAddress == null) {
+//            Log.e(TAG, "cameraService openSocket: null receiverAddress");
+//            return;
+//        }
+        Runnable socketRunnable = new Runnable() {
+
+            @Override
+            public void run() {
+//                try {
+//                    socket = new Socket();
+//                    socket.bind(null);
+//                    socket.connect(new InetSocketAddress(receiverAddress, port));
+//                    DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
+                    while (true) {
+                        try {
+                            ByteBuffer buffer = blockingQueue.take();
+                            Message message = uiHandler.obtainMessage(0, buffer);
+                            uiHandler.dispatchMessage(message);
+//                            outputStream.flush();
+                        } catch (InterruptedException exception) {
+                            Log.e(TAG, exception.getMessage());
+                        }
+                    }
+//                    Log.d(TAG, "openSocket: bytes written");
+//                } catch (IOException exception) {
+//                    Log.e(TAG, exception.getMessage());
+//                }
+            }
+        };
+
+        networkHandler.post(socketRunnable);
     }
+
+    private ImageReader.OnImageAvailableListener onImageAvailableListener = new ImageReader.OnImageAvailableListener() {
+
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+//                Log.d(TAG, "onImageAvailable");
+
+            Image image = reader.acquireLatestImage();
+            Image.Plane[] planes = image.getPlanes();
+            ByteBuffer redBuffer = planes[0].getBuffer();
+            ByteBuffer greenBuffer = planes[1].getBuffer();
+            ByteBuffer blueBuffer = planes[2].getBuffer();
+            Log.d(TAG, "redBuffer length: " + redBuffer.capacity());
+            Log.d(TAG, "greenBuffer length: " + greenBuffer.capacity());
+            Log.d(TAG, "blueBuffer length: " + blueBuffer.capacity());
+            ByteBuffer transmissionBuffer = ByteBuffer.allocateDirect(redBuffer.remaining() + greenBuffer.remaining() + blueBuffer.remaining());
+            transmissionBuffer.put(redBuffer).put(greenBuffer).put(blueBuffer);
+            try {
+                blockingQueue.put(transmissionBuffer);
+            } catch (InterruptedException exception) {
+                Log.e(TAG, exception.getMessage());
+            }
+            image.close();
+        }
+    };
 
     private CameraCaptureSession.StateCallback captureSessionStateCallback = new CameraCaptureSession.StateCallback() {
 
@@ -291,6 +395,15 @@ public class CameraService extends Service {
         public void onConfigured(CameraCaptureSession session) {
 
             cameraCaptureSession = session;
+
+            if (state == State.STARTING) {
+
+                state = State.STARTED;
+
+                if (onStartCameraCallback != null) {
+                    onStartCameraCallback.onStartCamera();
+                }
+            }
 
             try {
                 session.setRepeatingRequest(captureRequestBuilder.build(), null, null);
@@ -421,7 +534,9 @@ public class CameraService extends Service {
         if (state.equals(State.STARTED)) {
 
             state = State.STOPPING;
-            videoCodec.signalEndOfInputStream();
+            if (videoCodec != null) {
+              videoCodec.signalEndOfInputStream();
+            }
 
             try {
                 cameraCaptureSession.abortCaptures();
@@ -435,7 +550,7 @@ public class CameraService extends Service {
 
     private void cameraStopped() {
 
-       //Log.d(TAG, "cameraStopped");
+        Log.d(TAG, "cameraStopped");
         releaseResources();
 
         if (state.equals(State.STARTED)) {

@@ -6,19 +6,22 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Point;
 import android.net.NetworkInfo;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.view.Surface;
+import android.view.SurfaceView;
 import android.view.View;
 import android.widget.Button;
 import android.util.Log;
 import android.widget.TextView;
 
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.nio.ByteBuffer;
 
 public class MainActivity extends Activity {
 
@@ -27,6 +30,7 @@ public class MainActivity extends Activity {
     private WifiP2pManager.Channel channel;
     private BroadcastReceiver receiver;
     private IntentFilter intentFilter;
+    private SurfaceView surfaceView;
     private CameraService cameraService = null;
     private ReceiverService receiverService = null;
 
@@ -34,9 +38,8 @@ public class MainActivity extends Activity {
         CAMERA, RECEIVER
     }
     private Role myRole;
-    private ServerSocket serverSocket;
-    private Socket socket;
-    public final static int port = 8353;
+    public final static int port = 18353; // arbitrary port
+    public static Point screenSize = new Point();
 
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
 
@@ -87,14 +90,13 @@ public class MainActivity extends Activity {
                                 myRole = Role.RECEIVER;
                                 Log.d(TAG, "I am the group owner. Owner: " + receiverAddress);
 
-                                startServer();
+//                                startServer();
                             } else if (info.groupFormed) {
                                 myRole = Role.CAMERA;
                                 Log.d(TAG, "I am not the group owner. Owner: " + receiverAddress);
 
-                                setServerAddress(receiverAddress);
-//                                startClient();
-                                startCamera();
+                                cameraService.setReceiverAddress(receiverAddress);
+//                                startCamera();
                             }
 
                         }
@@ -113,8 +115,9 @@ public class MainActivity extends Activity {
         startService(intent);
     }
 
-    private void setServerAddress(String address) {
-        cameraService.setReceiverAddress(address);
+    private void stopServer() {
+
+        receiverService.stop();
     }
 
     private void startCamera() {
@@ -124,6 +127,10 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(this, CameraService.class);
             startService(intent);
         }
+    }
+
+    private void stopCamera() {
+        cameraService.stopCamera();
     }
 
     private ServiceConnection cameraConnection = new ServiceConnection() {
@@ -136,6 +143,7 @@ public class MainActivity extends Activity {
             cameraService = ((CameraService.cameraServiceBinder) binder).getService();
             cameraService.registerOnStartCameraCallback(onStartCameraCallback);
             cameraService.registerOnStopCameraCallback(onStopCameraCallback);
+            cameraService.registerOnFrameReceivedCallback(onFrameReceivedCallback);
         }
 
         @Override
@@ -178,14 +186,19 @@ public class MainActivity extends Activity {
     private ReceiverService.OnFrameReceivedCallback onFrameReceivedCallback = new ReceiverService.OnFrameReceivedCallback() {
 
         @Override
-        void onFrameReceived() {
+        void onFrameReceived(ByteBuffer buffer) {
             Log.d(TAG, "onFrameReceivedCallback.onFrameReceived");
+            int length = buffer.capacity();
+            if (length % 3 != 0) {
+                Log.e(TAG, "onFrameReceived: ByteBuffer length: " + length + " not multiple of 3");
+                return;
+            }
+//            ByteBuffer redBuffer = ByteBuffer.allocate(length / 3);
+//            ByteBuffer greenBuffer = ByteBuffer.allocate(length / 3);
+//            ByteBuffer blueBuffer = ByteBuffer.allocate(length / 3);
+//            Canvas canvas = surfaceView.getHolder().lockHardwareCanvas();
         }
     };
-
-    private void stopCamera() {
-        cameraService.stopCamera();
-    }
 
     private void checkConnection() {
 
@@ -210,11 +223,14 @@ public class MainActivity extends Activity {
 
         receiver = new BroadcastReceiver(manager, channel, MainActivity.this);
 
+        getWindowManager().getDefaultDisplay().getRealSize(screenSize);
+
+        surfaceView = findViewById(R.id.surface_view);
+
         final Button cameraButton = findViewById(R.id.camera_button);
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.d(TAG, "cameraButton onClick");
                 startCamera();
             }
         });
@@ -223,7 +239,6 @@ public class MainActivity extends Activity {
         stopCameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.d(TAG, "stopCameraButton onClick");
                 stopCamera();
             }
         });
@@ -232,6 +247,15 @@ public class MainActivity extends Activity {
         receiverButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                startServer();
+            }
+        });
+
+        final Button stopReceiverButton = findViewById(R.id.stop_receiver_button);
+        stopReceiverButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stopServer();
             }
         });
 
@@ -254,7 +278,9 @@ public class MainActivity extends Activity {
         super.onResume();
         registerReceiver(receiver, intentFilter);
 //        discoverPeers();
-        Log.d(TAG, "mainActivity thread id: " + String.valueOf(Thread.currentThread().getId()));
+        Point size = new Point();
+        getWindowManager().getDefaultDisplay().getRealSize(size);
+        Log.d(TAG, size.toString());
         checkConnection();
     }
 

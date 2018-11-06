@@ -13,6 +13,8 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 public class ReceiverService extends Service {
@@ -37,7 +39,7 @@ public class ReceiverService extends Service {
     }
 
     static abstract class OnFrameReceivedCallback {
-        abstract void onFrameReceived();
+        abstract void onFrameReceived(ByteBuffer buffer);
     }
 
     public void registerOnFrameReceivedCallback(OnFrameReceivedCallback callback) {
@@ -47,7 +49,7 @@ public class ReceiverService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
 
-        HandlerThread thread = new HandlerThread("receiverThread");
+        HandlerThread thread = new HandlerThread("receiverNetworkThread");
         thread.start();
         Looper looper = thread.getLooper();
         Handler handler = new Handler(looper);
@@ -55,7 +57,11 @@ public class ReceiverService extends Service {
         Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                openSocket();
+                try {
+                    openSocket();
+                } catch (SocketException exception) {
+                    Log.e(TAG, exception.getMessage());
+                }
             }
         };
 
@@ -64,7 +70,7 @@ public class ReceiverService extends Service {
         return START_NOT_STICKY;
     }
 
-    public void openSocket() {
+    public void openSocket() throws SocketException {
 
         Log.d(TAG, "receiverService openSocket thread id: " + String.valueOf(Thread.currentThread().getId()));
         try {
@@ -76,6 +82,15 @@ public class ReceiverService extends Service {
             String s = new String(buffer, 0, numBytes, StandardCharsets.UTF_8);
             Log.d(TAG, "bytes length: " + String.valueOf(numBytes));
             Log.d(TAG, s);
+        } catch (IOException exception) {
+            Log.e(TAG, exception.getMessage());
+        }
+    }
+
+    public void stop() {
+
+        try {
+            socket.close();
         } catch (IOException exception) {
             Log.e(TAG, exception.getMessage());
         }
