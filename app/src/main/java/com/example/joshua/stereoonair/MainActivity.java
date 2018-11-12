@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Point;
 import android.net.NetworkInfo;
@@ -38,7 +39,12 @@ public class MainActivity extends Activity {
         CAMERA, RECEIVER
     }
     private Role myRole;
+    public static String serverAddress;
     public final static int port = 18353; // arbitrary port
+//    public static int videoWidth = 1920;
+//    public static int videoHeight = 1080;
+    public static int videoWidth = 160;
+    public static int videoHeight = 120;
     public static Point screenSize = new Point();
 
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
@@ -79,28 +85,7 @@ public class MainActivity extends Activity {
                 if (networkInfo.isConnected()) {
                     Log.d(TAG, "network isConnected");
 
-                    manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
-                        @Override
-                        public void onConnectionInfoAvailable(WifiP2pInfo info) {
-                            Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
-
-                            String receiverAddress = info.groupOwnerAddress.getHostAddress();
-
-                            if (info.groupFormed && info.isGroupOwner) {
-                                myRole = Role.RECEIVER;
-                                Log.d(TAG, "I am the group owner. Owner: " + receiverAddress);
-
-//                                startServer();
-                            } else if (info.groupFormed) {
-                                myRole = Role.CAMERA;
-                                Log.d(TAG, "I am not the group owner. Owner: " + receiverAddress);
-
-                                cameraService.setReceiverAddress(receiverAddress);
-//                                startCamera();
-                            }
-
-                        }
-                    });
+                    manager.requestConnectionInfo(channel, connectionInfoListener);
                 }
 
             } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
@@ -108,6 +93,29 @@ public class MainActivity extends Activity {
             }
         }
     }
+
+    private WifiP2pManager.ConnectionInfoListener connectionInfoListener = new WifiP2pManager.ConnectionInfoListener() {
+
+        @Override
+        public void onConnectionInfoAvailable(WifiP2pInfo info) {
+            Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
+
+            if (info.groupFormed) {
+                MainActivity.serverAddress = info.groupOwnerAddress.getHostAddress();
+            }
+
+//            if (info.groupFormed && info.isGroupOwner) {
+//                myRole = Role.RECEIVER;
+//                                startServer();
+//            } else if (info.groupFormed) {
+//                myRole = Role.CAMERA;
+//                                startCamera();
+//            }
+
+            TextView connectionTextView = findViewById(R.id.connection_textview);
+            connectionTextView.setText(info.toString());
+        }
+    };
 
     private void startServer() {
 
@@ -157,7 +165,10 @@ public class MainActivity extends Activity {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
 
+            SurfaceView surfaceView = findViewById(R.id.surface_view);
+            Surface surface = surfaceView.getHolder().getSurface();
             receiverService = ((ReceiverService.receiverServiceBinder) binder).getService();
+            receiverService.setVideoOutputSurface(surface);
             receiverService.registerOnFrameReceivedCallback(onFrameReceivedCallback);
         }
 
@@ -186,30 +197,21 @@ public class MainActivity extends Activity {
     private ReceiverService.OnFrameReceivedCallback onFrameReceivedCallback = new ReceiverService.OnFrameReceivedCallback() {
 
         @Override
-        void onFrameReceived(ByteBuffer buffer) {
+        void onFrameReceived(byte[] bytes) {
             Log.d(TAG, "onFrameReceivedCallback.onFrameReceived");
-            int length = buffer.capacity();
-            if (length % 3 != 0) {
-                Log.e(TAG, "onFrameReceived: ByteBuffer length: " + length + " not multiple of 3");
-                return;
-            }
 //            ByteBuffer redBuffer = ByteBuffer.allocate(length / 3);
 //            ByteBuffer greenBuffer = ByteBuffer.allocate(length / 3);
 //            ByteBuffer blueBuffer = ByteBuffer.allocate(length / 3);
-//            Canvas canvas = surfaceView.getHolder().lockHardwareCanvas();
+            Canvas canvas = surfaceView.getHolder().lockHardwareCanvas();
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            canvas.drawBitmap(bitmap, 0, 0, null);
+            surfaceView.getHolder().unlockCanvasAndPost(canvas);
         }
     };
 
     private void checkConnection() {
 
-        manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
-            @Override
-            public void onConnectionInfoAvailable(WifiP2pInfo info) {
-                Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
-                TextView connectionTextView = findViewById(R.id.connection_textview);
-                connectionTextView.setText(info.toString());
-            }
-        });
+        manager.requestConnectionInfo(channel, connectionInfoListener);
     }
 
     @Override
