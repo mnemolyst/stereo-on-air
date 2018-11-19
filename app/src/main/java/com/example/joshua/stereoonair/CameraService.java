@@ -19,7 +19,6 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
@@ -29,10 +28,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Looper;
-import android.os.Message;
 import android.util.Log;
-import android.util.Size;
 import android.view.Surface;
 import android.view.SurfaceView;
 
@@ -42,11 +38,9 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
-import static com.example.joshua.stereoonair.MainActivity.port;
+import static com.example.joshua.stereoonair.MainActivity.leftPort;
 
 public class CameraService extends Service {
 
@@ -73,15 +67,12 @@ public class CameraService extends Service {
     private Integer sensorOrientation = 0;
     private StreamConfigurationMap configurationMap;
     private Socket socket;
-    private String receiverAddress;
     private Handler cameraHandler;
     private Handler networkHandler;
-    private Handler uiHandler;
     private ArrayBlockingQueue<byte[]> blockingQueue;
 
     private OnStartCameraCallback onStartCameraCallback;
     private OnStopCameraCallback onStopCameraCallback;
-    private ReceiverService.OnFrameReceivedCallback onFrameReceivedCallback;
 
     static abstract class OnStartCameraCallback {
         abstract void onStartCamera();
@@ -89,10 +80,6 @@ public class CameraService extends Service {
 
     static abstract class OnStopCameraCallback {
         abstract void onStopCamera();
-    }
-
-    public void registerOnFrameReceivedCallback(ReceiverService.OnFrameReceivedCallback callback) {
-        onFrameReceivedCallback = callback;
     }
 
     public void registerOnStartCameraCallback(OnStartCameraCallback callback) {
@@ -121,19 +108,19 @@ public class CameraService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
 
         Log.d(TAG, "onStartCommand");
-//        int numCodecs = MediaCodecList.getCodecCount();
-//        for (int i = 0; i < numCodecs; i++) {
-//            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
-//            Log.d(TAG, "codec: " + codecInfo.getName() + " enc: " + codecInfo.isEncoder());
-//
-//            String[] types = codecInfo.getSupportedTypes();
-//            for (int j = 0; j < types.length; j++) {
-//                Log.d(TAG, "type: " + types[j]);
-//            }
-//        }
-//        return START_NOT_STICKY;
+        int numCodecs = MediaCodecList.getCodecCount();
+        for (int i = 0; i < numCodecs; i++) {
+            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
+            Log.d(TAG, "codec: " + codecInfo.getName() + " enc: " + codecInfo.isEncoder());
 
-        blockingQueue = new ArrayBlockingQueue<>(2);
+            String[] types = codecInfo.getSupportedTypes();
+            for (int j = 0; j < types.length; j++) {
+                Log.d(TAG, "type: " + types[j]);
+            }
+        }
+//        return START_NOT_STICKY;
+//
+        blockingQueue = new ArrayBlockingQueue<>(3);
 
         state = State.STOPPED;
 
@@ -144,14 +131,6 @@ public class CameraService extends Service {
         HandlerThread networkThread = new HandlerThread("cameraNetworkThread");
         networkThread.start();
         networkHandler = new Handler(networkThread.getLooper());
-
-        uiHandler = new Handler(Looper.getMainLooper()) {
-            @Override
-            public void handleMessage(Message message) {
-                byte[] bytes = (byte[]) message.obj;
-                onFrameReceivedCallback.onFrameReceived(bytes);
-            }
-        };
 
         openCamera();
 
@@ -257,22 +236,37 @@ public class CameraService extends Service {
     private void startVideoCodec() throws IOException {
 
         MediaFormat format;
-        format = MediaFormat.createVideoFormat("video/x-vnd.on2.vp8", MainActivity.videoWidth, MainActivity.videoHeight);
+        format = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
 
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         format.setInteger(MediaFormat.KEY_BIT_RATE, 1_000_000);
-        format.setString(MediaFormat.KEY_FRAME_RATE, null);
-        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 0);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
         MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
         String codecName = codecList.findEncoderForFormat(format);
         Log.d(TAG, "codecName: " + codecName);
 
-        format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
-
         videoCodec = MediaCodec.createByCodecName(codecName);
+//        videoCodec = MediaCodec.createEncoderByType(MainActivity.mimeType);
+//        MediaCodecInfo info = videoCodec.getCodecInfo();
+//        MediaCodecInfo.CodecCapabilities capabilities = info.getCapabilitiesForType(MainActivity.mimeType);
+//        MediaCodecInfo.VideoCapabilities videoCapabilities = capabilities.getVideoCapabilities();
+//        Range<Integer> supportedHeights = videoCapabilities.getSupportedHeights();
+//        Range<Integer> supportedWidths = videoCapabilities.getSupportedWidths();
+//        int[] formats = configurationMap.getOutputFormats();
+//        for (int i : formats) {
+//            Log.d(TAG, "format: " + i);
+//            Size[] sizes = configurationMap.getOutputSizes(i);
+//            for (Size s : sizes) {
+//                Log.d(TAG, "size: " + s.toString());
+//                Log.d(TAG, String.valueOf(videoCapabilities.areSizeAndRateSupported(s.getWidth(), s.getHeight(), 30)));
+//            }
+//        }
         videoCodec.setCallback(videoCodecCallback, cameraHandler);
         videoCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+        Log.d(TAG, videoCodec.getInputFormat().toString());
+        Log.d(TAG, videoCodec.getOutputFormat().toString());
         videoInputSurface = videoCodec.createInputSurface();
         videoCodec.start();
     }
@@ -285,37 +279,10 @@ public class CameraService extends Service {
             return;
         }
 
-        int[] formats = configurationMap.getOutputFormats();
-        Log.d(TAG, "formats:");
-        for (int i = 0; i < formats.length; i++) {
-            Log.d(TAG, String.valueOf(formats[i]));
-        }
-        // formats: 32, 256, 34, 35, 36, 37
-        // raw_sensor, jpeg, private, yuv_420_888, raw_private, raw_10
-        int smallestWidth = 99_999;
-        int smallestHeight = 99_999;
-//        if (Arrays.asList(formats).contains(outputFormat)) {
-            Size[] sizes = configurationMap.getOutputSizes(outputFormat);
-            for (int i = 0; i < sizes.length; i++) {
-                Size size = sizes[i];
-                if (size.getWidth() < smallestWidth && size.getHeight() < smallestHeight) {
-                    smallestWidth = size.getWidth();
-                    smallestHeight = size.getHeight();
-                }
-            }
-            Log.d(TAG, "Outputting to size: " + smallestWidth + ", " + smallestHeight);
-//        } else {
-//            Log.e(TAG, "outputFormat not supported");
-//            stopSelf();
-//            return;
-//        }
-//        imageReader = ImageReader.newInstance(smallestWidth, smallestHeight, outputFormat, 2);
-//        imageReader.setOnImageAvailableListener(onImageAvailableListener, cameraHandler);
-//        videoInputSurface = imageReader.getSurface();
-
         try {
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
             captureRequestBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+//            captureRequestBuilder.set(CaptureRequest.)
             captureRequestBuilder.addTarget(videoInputSurface);
             cameraDevice.createCaptureSession(Arrays.asList(videoInputSurface), captureSessionStateCallback, null);
         } catch (CameraAccessException e) {
@@ -323,14 +290,10 @@ public class CameraService extends Service {
         }
     }
 
-    public void setReceiverAddress(String address) {
-        receiverAddress = address;
-    }
-
     private void openSocket() {
 
         if (MainActivity.serverAddress == null) {
-            Log.e(TAG, "cameraService openSocket: null serverAddress");
+            Log.e(TAG, "cameraService openSockets: null serverAddress");
             return;
         }
         Runnable socketRunnable = new Runnable() {
@@ -340,7 +303,7 @@ public class CameraService extends Service {
                 try {
                     socket = new Socket();
                     socket.bind(null);
-                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, port));
+                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, leftPort));
                     Log.d(TAG, "Connected!");
                     DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
                     while (true) {
@@ -361,34 +324,6 @@ public class CameraService extends Service {
 
         networkHandler.post(socketRunnable);
     }
-
-    private ImageReader.OnImageAvailableListener onImageAvailableListener = new ImageReader.OnImageAvailableListener() {
-
-        @Override
-        public void onImageAvailable(ImageReader reader) {
-//                Log.d(TAG, "onImageAvailable");
-
-            Image image = reader.acquireLatestImage();
-            Image.Plane[] planes = image.getPlanes();
-//            ByteBuffer byteBuffer = planes[0].getBuffer();
-//            byte[] bytes = new byte[byteBuffer.remaining()];
-//            byteBuffer.get(bytes);
-            ByteBuffer redBuffer = planes[0].getBuffer();
-            ByteBuffer greenBuffer = planes[1].getBuffer();
-            ByteBuffer blueBuffer = planes[2].getBuffer();
-//            Log.d(TAG, "redBuffer length: " + redBuffer.capacity());
-//            Log.d(TAG, "greenBuffer length: " + greenBuffer.capacity());
-//            Log.d(TAG, "blueBuffer length: " + blueBuffer.capacity());
-            ByteBuffer transmissionBuffer = ByteBuffer.allocateDirect(redBuffer.remaining() + greenBuffer.remaining() + blueBuffer.remaining());
-            transmissionBuffer.put(redBuffer).put(greenBuffer).put(blueBuffer);
-//            try {
-//                blockingQueue.put(bytes);
-//            } catch (InterruptedException exception) {
-//                Log.e(TAG, exception.getMessage());
-//            }
-            image.close();
-        }
-    };
 
     private CameraCaptureSession.StateCallback captureSessionStateCallback = new CameraCaptureSession.StateCallback() {
 
@@ -435,11 +370,11 @@ public class CameraService extends Service {
         @Override
         public void onOutputBufferAvailable(MediaCodec codec, int index, MediaCodec.BufferInfo info) {
 
-            Log.d(TAG, "onOutputBufferAvailable");
+//            Log.d(TAG, "onOutputBufferAvailable");
 
-            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == MediaCodec.BUFFER_FLAG_CODEC_CONFIG) {
-                return;
-            }
+//            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == MediaCodec.BUFFER_FLAG_CODEC_CONFIG) {
+//                return;
+//            }
 
             ByteBuffer outputBuffer;
             try {
@@ -454,14 +389,11 @@ public class CameraService extends Service {
             }
 
             byte[] bufferBytes = new byte[outputBuffer.remaining()];
+//            info.presentationTimeUs
             outputBuffer.get(bufferBytes);
             codec.releaseOutputBuffer(index, false);
 
-//            try {
-                blockingQueue.offer(bufferBytes);
-//            } catch (InterruptedException exception) {
-//                Log.e(TAG, exception.getMessage());
-//            }
+            blockingQueue.offer(bufferBytes);
 
 //            if ((info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) == MediaCodec.BUFFER_FLAG_KEY_FRAME) {
 //            }

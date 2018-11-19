@@ -2,4 +2,8 @@
     <string name="app_name">Stereo On Air</string>
     <string name="notification_title">Recording</string>
     <string name="notification_message">Recording Video</string>
+
+    <string name="title_activity_viewer">ViewerActivity</string>
+    <string name="dummy_button">Dummy Button</string>
+    <string name="dummy_content">DUMMY\nCONTENT</string>
 </resources>
