@@ -40,8 +40,6 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
 
-import static com.example.joshua.stereoonair.MainActivity.leftPort;
-
 public class CameraService extends Service {
 
     private final static String TAG = "CameraService";
@@ -303,7 +301,7 @@ public class CameraService extends Service {
                 try {
                     socket = new Socket();
                     socket.bind(null);
-                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, leftPort));
+                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, MainActivity.leftPort));
                     Log.d(TAG, "Connected!");
                     DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
                     while (true) {

@@ -29,13 +29,13 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintTop_toBottomOf="@id/camera_button"/>
 
-    <Button
+    <!--<Button
         android:id="@+id/stop_receiver_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Stop Receiver"
         app:layout_constraintLeft_toRightOf="@id/receiver_button"
-        app:layout_constraintTop_toBottomOf="@id/camera_button"/>
+        app:layout_constraintTop_toBottomOf="@id/camera_button"/>-->
 
     <TextView
         android:id="@+id/peer_textview"

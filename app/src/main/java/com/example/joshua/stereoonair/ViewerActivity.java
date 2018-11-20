@@ -3,16 +3,139 @@ package com.example.joshua.stereoonair;
 import android.annotation.SuppressLint;
 import android.app.ActionBar;
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.ServiceConnection;
+import android.net.NetworkInfo;
+import android.net.wifi.p2p.WifiP2pInfo;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
+import android.util.Log;
 import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.SurfaceView;
 import android.view.View;
+import android.widget.TextView;
 
 /**
  * An example full-screen activity that shows and hides the system UI (i.e.
  * status bar and navigation/system bar) with user interaction.
  */
 public class ViewerActivity extends Activity {
+
+    private final static String TAG = "ViewerActivity";
+    private ReceiverService receiverService = null;
+    private WifiP2pManager manager;
+    private WifiP2pManager.Channel channel;
+    private BroadcastReceiver receiver;
+    private IntentFilter intentFilter;
+
+    private class BroadcastReceiver extends android.content.BroadcastReceiver {
+
+        private WifiP2pManager manager;
+        private WifiP2pManager.Channel channel;
+        private Activity activity;
+
+        public BroadcastReceiver(
+                WifiP2pManager manager,
+                WifiP2pManager.Channel channel,
+                Activity activity) {
+
+            super();
+            this.manager = manager;
+            this.channel = channel;
+            this.activity = activity;
+        }
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+
+            String action = intent.getAction();
+
+            if (WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(action)) {
+
+                int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
+                if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
+                    Log.d(TAG, "wifi p2p state changed: enabled");
+                } else {
+                    Log.d(TAG, "wifi p2p state changed: not enabled");
+                }
+            } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
+                Log.d(TAG, "wifi p2p connection changed");
+
+                NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+
+                if (networkInfo.isConnected()) {
+                    Log.d(TAG, "network isConnected");
+
+                    manager.requestConnectionInfo(channel, connectionInfoListener);
+                }
+
+            } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
+                Log.d(TAG, "wifi p2p device changed");
+            }
+        }
+    }
+
+    private WifiP2pManager.ConnectionInfoListener connectionInfoListener = new WifiP2pManager.ConnectionInfoListener() {
+
+        @Override
+        public void onConnectionInfoAvailable(WifiP2pInfo info) {
+            Log.d(TAG, "onConnectionInfoAvailable: " + info.toString());
+
+            if (info.groupFormed) {
+                MainActivity.serverAddress = info.groupOwnerAddress.getHostAddress();
+            }
+
+//            if (info.groupFormed && info.isGroupOwner) {
+//                myRole = Role.RECEIVER;
+//                                startServer();
+//            } else if (info.groupFormed) {
+//                myRole = Role.CAMERA;
+//                                startCamera();
+//            }
+        }
+    };
+
+
+    private ServiceConnection receiverConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+
+            SurfaceView leftSurfaceView = findViewById(R.id.surface_view_left);
+            Surface leftSurface = leftSurfaceView.getHolder().getSurface();
+            SurfaceView rightSurfaceView = findViewById(R.id.surface_view_right);
+            Surface rightSurface = rightSurfaceView.getHolder().getSurface();
+
+            receiverService = ((ReceiverService.receiverServiceBinder) binder).getService();
+            receiverService.setVideoOutputSurfaces(leftSurface, rightSurface);
+
+            receiverService.start();
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+
+        }
+    };
+
+    private void startServer() {
+
+        Intent intent = new Intent(this, ReceiverService.class);
+//        startService(intent);
+        bindService(intent, receiverConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    private void stopServer() {
+
+        receiverService.stop();
+        unbindService(receiverConnection);
+    }
+
     /**
      * Whether or not the system UI should be auto-hidden after
      * {@link #AUTO_HIDE_DELAY_MILLIS} milliseconds.
@@ -105,7 +228,34 @@ public class ViewerActivity extends Activity {
         // Upon interacting with UI controls, delay any scheduled hide()
         // operations to prevent the jarring behavior of controls going away
         // while interacting with the UI.
-        findViewById(R.id.dummy_button).setOnTouchListener(mDelayHideTouchListener);
+        findViewById(R.id.close_button).setOnTouchListener(mDelayHideTouchListener);
+
+        manager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
+        channel = manager.initialize(this, getMainLooper(), null);
+
+        receiver = new BroadcastReceiver(manager, channel, this);
+
+        intentFilter = new IntentFilter();
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION);
+    }
+
+    @Override
+    protected void onResume() {
+
+        super.onResume();
+        registerReceiver(receiver, intentFilter);
+        startServer();
+    }
+
+    @Override
+    protected void onPause() {
+
+        super.onPause();
+        unregisterReceiver(receiver);
+        stopServer();
     }
 
     @Override

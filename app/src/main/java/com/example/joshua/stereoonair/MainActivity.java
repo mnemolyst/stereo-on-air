@@ -217,8 +217,6 @@ public class MainActivity extends Activity {
 
         getWindowManager().getDefaultDisplay().getRealSize(screenSize);
 
-        surfaceView = findViewById(R.id.surface_view_left);
-
         final Button cameraButton = findViewById(R.id.camera_button);
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -245,16 +243,16 @@ public class MainActivity extends Activity {
             }
         });
 
-        final Button stopReceiverButton = findViewById(R.id.stop_receiver_button);
-        stopReceiverButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                stopServer();
-            }
-        });
+//        final Button stopReceiverButton = findViewById(R.id.stop_receiver_button);
+//        stopReceiverButton.setOnClickListener(new View.OnClickListener() {
+//            @Override
+//            public void onClick(View v) {
+//                stopServer();
+//            }
+//        });
 
-//        Intent cameraIntent = new Intent(this, CameraService.class);
-//        bindService(cameraIntent, cameraConnection, Context.BIND_AUTO_CREATE);
+        Intent cameraIntent = new Intent(this, CameraService.class);
+        bindService(cameraIntent, cameraConnection, Context.BIND_AUTO_CREATE);
 
 //        Intent receiverIntent = new Intent(this, ReceiverService.class);
 //        bindService(receiverIntent, receiverConnection, Context.BIND_AUTO_CREATE);
@@ -272,9 +270,6 @@ public class MainActivity extends Activity {
         super.onResume();
         registerReceiver(receiver, intentFilter);
 //        discoverPeers();
-        Point size = new Point();
-        getWindowManager().getDefaultDisplay().getRealSize(size);
-        Log.d(TAG, size.toString());
         checkConnection();
     }
 
