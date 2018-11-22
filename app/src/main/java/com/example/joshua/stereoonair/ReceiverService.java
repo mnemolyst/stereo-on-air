@@ -17,7 +17,6 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -37,6 +36,7 @@ public class ReceiverService extends Service {
     private Surface rightOutputSurface;
     private ServerSocket leftServerSocket;
     private ServerSocket rightServerSocket;
+    private ServerSocket serverSocket;
     private Socket leftSocket;
     private Socket rightSocket;
     private MediaCodec leftVideoCodec;
@@ -45,6 +45,10 @@ public class ReceiverService extends Service {
     private ArrayBlockingQueue<ByteBuffer> rightBlockingQueue;
     private MediaCodec.Callback leftCodecCallback;
     private MediaCodec.Callback rightCodecCallback;
+
+    private enum Side { LEFT, RIGHT }
+    private Side acceptingSocketForSide = Side.LEFT;
+    private boolean leftConnected = false;
 
     private int presentation = 0;
 
@@ -80,31 +84,53 @@ public class ReceiverService extends Service {
 
     public void start() {
 
-        leftBlockingQueue = new ArrayBlockingQueue<>(3);
-        leftCodecCallback = this.createCodecCallback(leftBlockingQueue);
+        MediaFormat mediaFormat = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
+        try {
+            serverSocket = new ServerSocket();
+            serverSocket.setReuseAddress(true);
+            serverSocket.bind(new InetSocketAddress(MainActivity.leftPort));
+            serverSocket.setSoTimeout(5_000);
+        } catch (IOException exception) {
+            Log.e(TAG, exception.getMessage());
+            stopSelf();
+            return;
+        }
 
-        rightBlockingQueue = new ArrayBlockingQueue<>(3);
-        rightCodecCallback = this.createCodecCallback(rightBlockingQueue);
+        leftBlockingQueue = new ArrayBlockingQueue<>(3);
+        leftCodecCallback = createCodecCallback(leftBlockingQueue);
 
         leftCodecThread = new HandlerThread("leftCodecThread");
         leftCodecThread.start();
         leftCodecHandler = new Handler(leftCodecThread.getLooper());
 
-        rightCodecThread = new HandlerThread("rightCodecThread");
-        rightCodecThread.start();
-        rightCodecHandler = new Handler(rightCodecThread.getLooper());
-
-        startCodecs();
+        leftVideoCodec = createCodec(mediaFormat);
+        leftVideoCodec.setCallback(leftCodecCallback, leftCodecHandler);
+        leftVideoCodec.configure(mediaFormat, leftOutputSurface, null, 0);
+        leftVideoCodec.start();
 
         leftNetworkThread = new HandlerThread("leftNetworkThread");
         leftNetworkThread.start();
         leftNetworkHandler = new Handler(leftNetworkThread.getLooper());
+        leftNetworkHandler.post(createSocketRunnable());
+
+        rightBlockingQueue = new ArrayBlockingQueue<>(3);
+        rightCodecCallback = createCodecCallback(rightBlockingQueue);
+
+        rightCodecThread = new HandlerThread("rightCodecThread");
+        rightCodecThread.start();
+        rightCodecHandler = new Handler(rightCodecThread.getLooper());
+
+        rightVideoCodec = createCodec(mediaFormat);
+        rightVideoCodec.setCallback(rightCodecCallback, rightCodecHandler);
+        rightVideoCodec.configure(mediaFormat, rightOutputSurface, null, 0);
+        rightVideoCodec.start();
 
         rightNetworkThread = new HandlerThread("rightNetworkThread");
         rightNetworkThread.start();
         rightNetworkHandler = new Handler(rightNetworkThread.getLooper());
+        rightNetworkHandler.post(createSocketRunnable());
 
-        openSockets();
+//        openSockets();
     }
 
     private MediaCodec.Callback createCodecCallback(final ArrayBlockingQueue<ByteBuffer> queue) {
@@ -156,20 +182,6 @@ public class ReceiverService extends Service {
         };
     };
 
-    private void startCodecs() {
-
-        MediaFormat mediaFormat = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
-
-        leftVideoCodec = this.createCodec(mediaFormat);
-        leftVideoCodec.setCallback(leftCodecCallback, leftCodecHandler);
-        leftVideoCodec.configure(mediaFormat, leftOutputSurface, null, 0);
-        leftVideoCodec.start();
-        rightVideoCodec = this.createCodec(mediaFormat);
-        rightVideoCodec.setCallback(rightCodecCallback, rightCodecHandler);
-        rightVideoCodec.configure(mediaFormat, rightOutputSurface, null, 0);
-        rightVideoCodec.start();
-    }
-
     private MediaCodec createCodec(MediaFormat mediaFormat) {
 
         MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
@@ -183,67 +195,70 @@ public class ReceiverService extends Service {
         } catch (IOException exception) {
             Log.e(TAG, exception.getMessage());
             stopSelf();
+            return null;
         }
-        return null;
     }
 
-    public void openSockets() {
-
-        Runnable leftRunnable = this.createSocketRunnable(MainActivity.leftPort, leftBlockingQueue);
-        leftNetworkHandler.post(leftRunnable);
-
-        Runnable rightRunnable = this.createSocketRunnable(MainActivity.rightPort, rightBlockingQueue);
-        rightNetworkHandler.post(rightRunnable);
-    }
-
-    private Runnable createSocketRunnable(final int port, final ArrayBlockingQueue<ByteBuffer> queue) {
+    private Runnable createSocketRunnable() {
 
         return new Runnable() {
 
-            private ServerSocket serverSocket;
             private Socket socket;
             private DataInputStream inputStream;
+            private ArrayBlockingQueue<ByteBuffer> myQueue;
 
             @Override
             public void run() {
-                try {
-                    serverSocket = new ServerSocket();
-                    serverSocket.setReuseAddress(true);
-                    serverSocket.bind(new InetSocketAddress(port));
-                    serverSocket.setSoTimeout(5_000);
 
-                    while (true) {
+                if (acceptingSocketForSide == Side.LEFT) {
+                    acceptingSocketForSide = Side.RIGHT;
+                    myQueue = leftBlockingQueue;
+                } else {
+                    while (! leftConnected) {
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException exception) {
+                            Log.e(TAG, "Interrupted waiting for left to connect");
+                            return;
+                        }
+                    }
+                    myQueue = rightBlockingQueue;
+                }
+                while (true) {
+                    try {
                         try {
                             socket = serverSocket.accept();
-                            Log.d(TAG, "Connected! Accepted socket on port " + port);
+                            leftConnected = true;
+                            Log.d(TAG, "Connected! Accepted socket on port " + serverSocket.getLocalPort());
                             inputStream = new DataInputStream(socket.getInputStream());
                             break;
                         } catch (SocketTimeoutException exception) {
                             if (Thread.interrupted()) {
-                                Log.d(TAG, "interrupted");
-                                serverSocket.close();
+                                Log.d(TAG, "Interrupted waiting for socket connection");
                                 return;
                             }
                         }
+                    } catch (IOException exception) {
+                        Log.e(TAG, exception.getMessage());
+                        stopSelf();
                     }
-                    // Make a really big byte array to hold video frames
-                    byte[] bytes = new byte[100_000];
-                    int numBytes;
+                }
+                // Make a really big byte array to hold video frames
+                byte[] bytes = new byte[10_000];
+                int numBytes;
+                try {
                     while (true) {
-                        try {
-                            numBytes = inputStream.read(bytes);
-                            ByteBuffer buffer = ByteBuffer.allocate(numBytes);
-                            buffer.put(bytes, 0, numBytes);
-                            buffer.rewind();
-                            queue.put(buffer);
-                        } catch (InterruptedException exception) {
-                            Log.e(TAG, "Interrupted reading socket input stream");
-                        } finally {
-                            serverSocket.close();
-                        }
+                        numBytes = inputStream.read(bytes);
+                        ByteBuffer buffer = ByteBuffer.allocate(numBytes);
+                        buffer.put(bytes, 0, numBytes);
+                        buffer.rewind();
+                        myQueue.put(buffer);
                     }
+                } catch (InterruptedException exception) {
+                    Log.e(TAG, "Interrupted reading socket input stream");
                 } catch (IOException exception) {
                     Log.e(TAG, exception.getMessage());
+                    stopSelf();
                 }
             }
         };
