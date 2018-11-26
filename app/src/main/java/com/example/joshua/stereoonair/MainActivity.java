@@ -6,9 +6,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Point;
 import android.net.NetworkInfo;
 import android.net.wifi.p2p.WifiP2pInfo;
@@ -22,8 +19,6 @@ import android.widget.Button;
 import android.util.Log;
 import android.widget.TextView;
 
-import java.nio.ByteBuffer;
-
 public class MainActivity extends Activity {
 
     private final static String TAG = "MainActivity";
@@ -33,23 +28,18 @@ public class MainActivity extends Activity {
     private IntentFilter intentFilter;
     private SurfaceView surfaceView;
     private CameraService cameraService = null;
-    private ReceiverService receiverService = null;
 
     enum Role {
         CAMERA, RECEIVER
     }
     private Role myRole;
     public static String serverAddress;
-    public final static int leftPort = 18353; // arbitrary
-    public final static int rightPort = 18354; // arbitrary
-    public static int videoWidth = 800;
-    public static int videoHeight = 600;
-//    public static int videoWidth = 160;
-//    public static int videoHeight = 120;
-//    public static String mimeType = "video/x-vnd.on2.vp8";
+    public final static int port = 18353; // arbitrary
+//    public static int videoWidth = 800;
+//    public static int videoHeight = 600;
+    public static int videoWidth = 1920;
+    public static int videoHeight = 1080;
     public static String mimeType = "video/avc";
-//    public static String encoderName = "OMX.google.h264.encoder";
-//    public static String decoderName = "OMX.google.h264.decoder";
     public static Point screenSize = new Point();
 
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
@@ -109,29 +99,10 @@ public class MainActivity extends Activity {
                 MainActivity.serverAddress = info.groupOwnerAddress.getHostAddress();
             }
 
-//            if (info.groupFormed && info.isGroupOwner) {
-//                myRole = Role.RECEIVER;
-//                                startServer();
-//            } else if (info.groupFormed) {
-//                myRole = Role.CAMERA;
-//                                startCamera();
-//            }
-
             TextView connectionTextView = findViewById(R.id.connection_textview);
             connectionTextView.setText(info.toString());
         }
     };
-
-    private void startServer() {
-
-        Intent intent = new Intent(this, ReceiverService.class);
-        startService(intent);
-    }
-
-    private void stopServer() {
-
-        receiverService.stop();
-    }
 
     private void startCamera() {
 
@@ -162,24 +133,6 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
 
             //Log.d(TAG, "onServiceDisconnected");
-        }
-    };
-
-    private ServiceConnection receiverConnection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder binder) {
-
-            SurfaceView leftSurfaceView = findViewById(R.id.surface_view_left);
-            Surface leftSurface = leftSurfaceView.getHolder().getSurface();
-            SurfaceView rightSurfaceView = findViewById(R.id.surface_view_right);
-            Surface rightSurface = rightSurfaceView.getHolder().getSurface();
-            receiverService = ((ReceiverService.receiverServiceBinder) binder).getService();
-            receiverService.setVideoOutputSurfaces(leftSurface, rightSurface);
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-
         }
     };
 
@@ -243,19 +196,8 @@ public class MainActivity extends Activity {
             }
         });
 
-//        final Button stopReceiverButton = findViewById(R.id.stop_receiver_button);
-//        stopReceiverButton.setOnClickListener(new View.OnClickListener() {
-//            @Override
-//            public void onClick(View v) {
-//                stopServer();
-//            }
-//        });
-
         Intent cameraIntent = new Intent(this, CameraService.class);
         bindService(cameraIntent, cameraConnection, Context.BIND_AUTO_CREATE);
-
-//        Intent receiverIntent = new Intent(this, ReceiverService.class);
-//        bindService(receiverIntent, receiverConnection, Context.BIND_AUTO_CREATE);
 
         intentFilter = new IntentFilter();
         intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);

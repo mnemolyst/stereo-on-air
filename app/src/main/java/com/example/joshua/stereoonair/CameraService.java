@@ -10,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -19,7 +18,6 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.media.ImageReader;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
@@ -30,7 +28,6 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.Surface;
-import android.view.SurfaceView;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -52,20 +49,16 @@ public class CameraService extends Service {
         HIGH_1080P, MED_720P
     }
     private State state = State.STOPPED;
-    private static VideoQuality videoQuality = VideoQuality.HIGH_1080P;
     private CameraDevice cameraDevice;
-    private SurfaceView surfaceView;
     private CaptureRequest.Builder captureRequestBuilder;
     private CameraCaptureSession cameraCaptureSession;
     private MediaCodec videoCodec;
-    private int outputFormat = ImageFormat.YUV_420_888;
-    private ImageReader imageReader;
     private Surface videoInputSurface;
     private MediaFormat videoFormat;
     private Integer sensorOrientation = 0;
     private StreamConfigurationMap configurationMap;
     private Socket socket;
-    private Handler cameraHandler;
+    private Handler codecHandler;
     private Handler networkHandler;
     private ArrayBlockingQueue<byte[]> blockingQueue;
 
@@ -106,16 +99,16 @@ public class CameraService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
 
         Log.d(TAG, "onStartCommand");
-        int numCodecs = MediaCodecList.getCodecCount();
-        for (int i = 0; i < numCodecs; i++) {
-            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
-            Log.d(TAG, "codec: " + codecInfo.getName() + " enc: " + codecInfo.isEncoder());
-
-            String[] types = codecInfo.getSupportedTypes();
-            for (int j = 0; j < types.length; j++) {
-                Log.d(TAG, "type: " + types[j]);
-            }
-        }
+//        int numCodecs = MediaCodecList.getCodecCount();
+//        for (int i = 0; i < numCodecs; i++) {
+//            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
+//            Log.d(TAG, "codec: " + codecInfo.getName() + " enc: " + codecInfo.isEncoder());
+//
+//            String[] types = codecInfo.getSupportedTypes();
+//            for (int j = 0; j < types.length; j++) {
+//                Log.d(TAG, "type: " + types[j]);
+//            }
+//        }
 //        return START_NOT_STICKY;
 //
         blockingQueue = new ArrayBlockingQueue<>(3);
@@ -124,7 +117,7 @@ public class CameraService extends Service {
 
         HandlerThread cameraThread = new HandlerThread("cameraThread");
         cameraThread.start();
-        cameraHandler = new Handler(cameraThread.getLooper());
+        codecHandler = new Handler(cameraThread.getLooper());
 
         HandlerThread networkThread = new HandlerThread("cameraNetworkThread");
         networkThread.start();
@@ -233,11 +226,10 @@ public class CameraService extends Service {
 
     private void startVideoCodec() throws IOException {
 
-        MediaFormat format;
-        format = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
+        final MediaFormat format = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
 
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        format.setInteger(MediaFormat.KEY_BIT_RATE, 500_000);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, 1_000_000);
         format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
         format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.2f);
 
@@ -261,12 +253,19 @@ public class CameraService extends Service {
 //                Log.d(TAG, String.valueOf(videoCapabilities.areSizeAndRateSupported(s.getWidth(), s.getHeight(), 30)));
 //            }
 //        }
-        videoCodec.setCallback(videoCodecCallback, cameraHandler);
+//        Log.d(TAG, videoCodec.getCodecInfo().toString());
+
+        videoCodec.setCallback(videoCodecCallback, codecHandler);
         videoCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-        Log.d(TAG, videoCodec.getInputFormat().toString());
-        Log.d(TAG, videoCodec.getOutputFormat().toString());
         videoInputSurface = videoCodec.createInputSurface();
-        videoCodec.start();
+
+        codecHandler.post(new Runnable() {
+            @Override
+            public void run() {
+
+                videoCodec.start();
+            }
+        });
     }
 
     private void startCamera() {
@@ -301,7 +300,7 @@ public class CameraService extends Service {
                 try {
                     socket = new Socket();
                     socket.bind(null);
-                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, MainActivity.leftPort));
+                    socket.connect(new InetSocketAddress(MainActivity.serverAddress, MainActivity.port));
                     Log.d(TAG, "Connected!");
                     DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
                     while (true) {
@@ -368,12 +367,6 @@ public class CameraService extends Service {
         @Override
         public void onOutputBufferAvailable(MediaCodec codec, int index, MediaCodec.BufferInfo info) {
 
-//            Log.d(TAG, "onOutputBufferAvailable");
-
-//            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == MediaCodec.BUFFER_FLAG_CODEC_CONFIG) {
-//                return;
-//            }
-
             ByteBuffer outputBuffer;
             try {
                 outputBuffer = codec.getOutputBuffer(index);
@@ -387,18 +380,10 @@ public class CameraService extends Service {
             }
 
             byte[] bufferBytes = new byte[outputBuffer.remaining()];
-//            info.presentationTimeUs
             outputBuffer.get(bufferBytes);
             codec.releaseOutputBuffer(index, false);
 
             blockingQueue.offer(bufferBytes);
-
-//            if ((info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) == MediaCodec.BUFFER_FLAG_KEY_FRAME) {
-//            }
-
-//            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
-//               Log.d(TAG, "videoCodec EOS");
-//            }
         }
 
         @Override
@@ -503,15 +488,6 @@ public class CameraService extends Service {
         }
         if (cameraDevice != null) {
             cameraDevice.close();
-        }
-    }
-
-    public static void setVideoQuality(String pref, String q1080p, String q720p) {
-       //Log.d(TAG, "setVideoQuality: " + pref);
-        if (pref.equals(q1080p)) {
-            CameraService.videoQuality = VideoQuality.HIGH_1080P;
-        } else if (pref.equals(q720p)) {
-            CameraService.videoQuality = VideoQuality.MED_720P;
         }
     }
 }

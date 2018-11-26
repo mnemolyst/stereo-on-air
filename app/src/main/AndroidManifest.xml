@@ -47,9 +47,6 @@
         <service
             android:name=".CameraService"
             android:exported="false" />
-        <service
-            android:name=".ReceiverService"
-            android:exported="false" />
 
         <activity
             android:name=".ViewerActivity"
