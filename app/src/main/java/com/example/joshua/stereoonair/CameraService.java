@@ -42,21 +42,14 @@ public class CameraService extends Service {
     private final static String TAG = "CameraService";
     private final static int ONGOING_NOTIFICATION_ID = 1;
 
-    enum State {
-        STOPPING, STOPPED, STARTING, STARTED
-    }
-    enum VideoQuality {
-        HIGH_1080P, MED_720P
-    }
-    private State state = State.STOPPED;
     private CameraDevice cameraDevice;
     private CaptureRequest.Builder captureRequestBuilder;
     private CameraCaptureSession cameraCaptureSession;
     private MediaCodec videoCodec;
     private Surface videoInputSurface;
     private MediaFormat videoFormat;
-    private Integer sensorOrientation = 0;
-    private StreamConfigurationMap configurationMap;
+//    private Integer sensorOrientation = 0;
+//    private StreamConfigurationMap configurationMap;
     private Socket socket;
     private Handler codecHandler;
     private Handler networkHandler;
@@ -111,9 +104,7 @@ public class CameraService extends Service {
 //        }
 //        return START_NOT_STICKY;
 //
-        blockingQueue = new ArrayBlockingQueue<>(3);
-
-        state = State.STOPPED;
+        blockingQueue = new ArrayBlockingQueue<>(2);
 
         HandlerThread cameraThread = new HandlerThread("cameraThread");
         cameraThread.start();
@@ -168,8 +159,8 @@ public class CameraService extends Service {
                 int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
                 if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
 
-                    configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                    sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+//                    configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+//                    sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
 
                     cameraManager.openCamera(id, cameraStateCallback, null);
                     break;
@@ -189,7 +180,6 @@ public class CameraService extends Service {
             Log.d(TAG, "cameraStateCallback.onOpened");
 
             cameraDevice = camera;
-            state = State.STARTING;
             videoFormat = null;
             prepareForRecording();
         }
@@ -229,9 +219,9 @@ public class CameraService extends Service {
         final MediaFormat format = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
 
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        format.setInteger(MediaFormat.KEY_BIT_RATE, 1_000_000);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, 2_000_000);
         format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
-        format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.2f);
+        format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.1f);
 
         MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
         String codecName = codecList.findEncoderForFormat(format);
@@ -242,8 +232,6 @@ public class CameraService extends Service {
 //        MediaCodecInfo info = videoCodec.getCodecInfo();
 //        MediaCodecInfo.CodecCapabilities capabilities = info.getCapabilitiesForType(MainActivity.mimeType);
 //        MediaCodecInfo.VideoCapabilities videoCapabilities = capabilities.getVideoCapabilities();
-//        Range<Integer> supportedHeights = videoCapabilities.getSupportedHeights();
-//        Range<Integer> supportedWidths = videoCapabilities.getSupportedWidths();
 //        int[] formats = configurationMap.getOutputFormats();
 //        for (int i : formats) {
 //            Log.d(TAG, "format: " + i);
@@ -253,6 +241,7 @@ public class CameraService extends Service {
 //                Log.d(TAG, String.valueOf(videoCapabilities.areSizeAndRateSupported(s.getWidth(), s.getHeight(), 30)));
 //            }
 //        }
+//        Log.d(TAG, "custom: " + videoCapabilities.areSizeAndRateSupported(960, 1080, 60));
 //        Log.d(TAG, videoCodec.getCodecInfo().toString());
 
         videoCodec.setCallback(videoCodecCallback, codecHandler);
@@ -329,15 +318,9 @@ public class CameraService extends Service {
 
             cameraCaptureSession = session;
 
-            if (state == State.STARTING) {
-
-                state = State.STARTED;
-
-                if (onStartCameraCallback != null) {
-                    onStartCameraCallback.onStartCamera();
-                }
+            if (onStartCameraCallback != null) {
+                onStartCameraCallback.onStartCamera();
             }
-
             try {
                 session.setRepeatingRequest(captureRequestBuilder.build(), null, null);
             } catch (CameraAccessException e) {
@@ -435,26 +418,18 @@ public class CameraService extends Service {
         startForeground(ONGOING_NOTIFICATION_ID, notification);
     }
 
-    State getState() {
-        return state;
-    }
-
     void stopCamera() {
 
-        if (state.equals(State.STARTED)) {
+        if (videoCodec != null) {
+          videoCodec.signalEndOfInputStream();
+        }
 
-            state = State.STOPPING;
-            if (videoCodec != null) {
-              videoCodec.signalEndOfInputStream();
-            }
-
-            try {
-                cameraCaptureSession.abortCaptures();
-                cameraCaptureSession.close();
-            } catch (CameraAccessException | IllegalStateException e) {
-                //e.printStackTrace();
-                cameraStopped();
-            }
+        try {
+            cameraCaptureSession.abortCaptures();
+            cameraCaptureSession.close();
+        } catch (CameraAccessException | IllegalStateException e) {
+            //e.printStackTrace();
+            cameraStopped();
         }
     }
 
@@ -463,17 +438,10 @@ public class CameraService extends Service {
         Log.d(TAG, "cameraStopped");
         releaseResources();
 
-        if (state.equals(State.STARTED)) {
-
-            state = State.STOPPING;
-//            videoCodec.signalEndOfInputStream();
-        }
-
         if (onStopCameraCallback != null) {
             onStopCameraCallback.onStopCamera();
         }
 
-        state = State.STOPPED;
         stopForeground(true);
         stopSelf();
     }

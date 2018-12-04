@@ -68,8 +68,6 @@ public class ViewerActivity extends Activity {
     private Side acceptingSocketForSide = Side.LEFT;
     private boolean leftConnected = false;
 
-    private int presentation = 0;
-
     private class BroadcastReceiver extends android.content.BroadcastReceiver {
 
         private WifiP2pManager manager;
@@ -189,12 +187,11 @@ public class ViewerActivity extends Activity {
 
         mediaFormat = MediaFormat.createVideoFormat(MainActivity.mimeType, MainActivity.videoWidth, MainActivity.videoHeight);
 
-
-        leftBlockingQueue = new ArrayBlockingQueue<>(3);
+        leftBlockingQueue = new ArrayBlockingQueue<>(4);
         leftCodecCallback = createCodecCallback(leftBlockingQueue);
         leftVideoCodec = createCodec(mediaFormat);
 
-        rightBlockingQueue = new ArrayBlockingQueue<>(3);
+        rightBlockingQueue = new ArrayBlockingQueue<>(4);
         rightCodecCallback = createCodecCallback(rightBlockingQueue);
         rightVideoCodec = createCodec(mediaFormat);
 
@@ -216,29 +213,34 @@ public class ViewerActivity extends Activity {
 
         Log.d(TAG, "onResume");
         super.onResume();
+
         registerReceiver(receiver, intentFilter);
 
+        // Left network thread init
         leftNetworkThread = new HandlerThread("leftNetworkThread");
         leftNetworkThread.start();
         leftNetworkHandler = new Handler(leftNetworkThread.getLooper());
         leftNetworkHandler.post(createSocketRunnable());
-
+        // Left codec thread init
         leftCodecThread = new HandlerThread("leftCodecThread");
         leftCodecThread.start();
         leftCodecHandler = new Handler(leftCodecThread.getLooper());
+        leftVideoCodec.setCallback(leftCodecCallback, leftCodecHandler);
         leftHolderCallback = createSurfaceHolderCallback(leftCodecHandler, leftVideoCodec, leftCodecCallback);
         SurfaceView leftSurfaceView = findViewById(R.id.surface_view_left);
         leftSurfaceHolder = leftSurfaceView.getHolder();
         leftSurfaceHolder.addCallback(leftHolderCallback);
 
+        // Right network thread init
         rightNetworkThread = new HandlerThread("rightNetworkThread");
         rightNetworkThread.start();
         rightNetworkHandler = new Handler(rightNetworkThread.getLooper());
         rightNetworkHandler.post(createSocketRunnable());
-
+        // Right codec thread init
         rightCodecThread = new HandlerThread("rightCodecThread");
         rightCodecThread.start();
         rightCodecHandler = new Handler(rightCodecThread.getLooper());
+        rightVideoCodec.setCallback(rightCodecCallback, rightCodecHandler);
         rightHolderCallback = createSurfaceHolderCallback(rightCodecHandler, rightVideoCodec, rightCodecCallback);
         SurfaceView rightSurfaceView = findViewById(R.id.surface_view_right);
         rightSurfaceHolder = rightSurfaceView.getHolder();
@@ -249,10 +251,12 @@ public class ViewerActivity extends Activity {
 
         return new MediaCodec.Callback() {
 
+            private int presentationTime = 0;
+
             @Override
             public void onInputBufferAvailable(MediaCodec codec, int index) {
 
-                Log.d(TAG, "onInputBufferAvailable thread id: " + Thread.currentThread().getId());
+//                Log.d(TAG, "onInputBufferAvailable thread id: " + Thread.currentThread().getId());
                 ByteBuffer inputBuffer;
                 try {
                     inputBuffer = codec.getInputBuffer(index);
@@ -267,8 +271,9 @@ public class ViewerActivity extends Activity {
 
                 try {
                     ByteBuffer buffer = queue.take();
+                    buffer.rewind();
                     inputBuffer.put(buffer);
-                    codec.queueInputBuffer(index, 0, buffer.capacity(), presentation++, 0);
+                    codec.queueInputBuffer(index, 0, buffer.capacity(), presentationTime++, 0);
                 } catch (InterruptedException exception) {
                     Log.e(TAG, "Interrupted reading from ByteBuffer queue");
                 }
@@ -324,7 +329,6 @@ public class ViewerActivity extends Activity {
                     @Override
                     public void run() {
 
-                        codec.setCallback(callback, handler);
                         codec.configure(mediaFormat, holder.getSurface(), null, 0);
                         codec.setVideoScalingMode(MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
                         codec.start();
@@ -341,6 +345,7 @@ public class ViewerActivity extends Activity {
             public void surfaceDestroyed(SurfaceHolder holder) {
 
                 Log.d(TAG, "surfaceDestroyed");
+                codec.signalEndOfInputStream();
                 codec.stop();
                 codec.release();
             }
@@ -367,7 +372,7 @@ public class ViewerActivity extends Activity {
                 } else {
                     while (! leftConnected) {
                         try {
-                            Thread.sleep(500);
+                            Thread.sleep(100);
                         } catch (InterruptedException exception) {
                             Log.e(TAG, "Interrupted waiting for left to connect");
                             return;
@@ -386,7 +391,7 @@ public class ViewerActivity extends Activity {
                         if (Thread.interrupted()) {
                             Log.d(TAG, "Interrupted waiting for socket connection");
                             return;
-                        }
+                        } // else repeat the while loop and try to accept the serverSocket again
                     } catch (IOException exception) {
                         Log.e(TAG, "Accept serverSocket exception: " + exception.getMessage());
 //                        stopSelf();

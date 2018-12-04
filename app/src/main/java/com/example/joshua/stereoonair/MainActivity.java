@@ -29,16 +29,14 @@ public class MainActivity extends Activity {
     private SurfaceView surfaceView;
     private CameraService cameraService = null;
 
-    enum Role {
-        CAMERA, RECEIVER
-    }
-    private Role myRole;
     public static String serverAddress;
     public final static int port = 18353; // arbitrary
-//    public static int videoWidth = 800;
-//    public static int videoHeight = 600;
-    public static int videoWidth = 1920;
-    public static int videoHeight = 1080;
+    public static int videoWidth = 800;
+    public static int videoHeight = 600;
+//    public static int videoWidth = 1280;
+//    public static int videoHeight = 720;
+//    public static int videoWidth = 1920;
+//    public static int videoHeight = 1080;
     public static String mimeType = "video/avc";
     public static Point screenSize = new Point();
 
@@ -106,11 +104,8 @@ public class MainActivity extends Activity {
 
     private void startCamera() {
 
-        if (cameraService.getState().equals(CameraService.State.STOPPED)) {
-
-            Intent intent = new Intent(this, CameraService.class);
-            startService(intent);
-        }
+        Intent intent = new Intent(this, CameraService.class);
+        startService(intent);
     }
 
     private void stopCamera() {
