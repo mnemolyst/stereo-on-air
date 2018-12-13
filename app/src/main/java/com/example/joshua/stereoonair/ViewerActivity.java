@@ -29,6 +29,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+import java.util.Calendar;
 import java.util.concurrent.ArrayBlockingQueue;
 
 /**
@@ -251,7 +252,8 @@ public class ViewerActivity extends Activity {
 
         return new MediaCodec.Callback() {
 
-            private int presentationTime = 0;
+            private long presentationTime;
+            private long firstTime = -1;
 
             @Override
             public void onInputBufferAvailable(MediaCodec codec, int index) {
@@ -269,11 +271,16 @@ public class ViewerActivity extends Activity {
                     return;
                 }
 
+                if (firstTime == -1) {
+                    firstTime = Calendar.getInstance().getTimeInMillis();
+                }
+                presentationTime = 1000 * (Calendar.getInstance().getTimeInMillis() - firstTime);
+
                 try {
                     ByteBuffer buffer = queue.take();
                     buffer.rewind();
                     inputBuffer.put(buffer);
-                    codec.queueInputBuffer(index, 0, buffer.capacity(), presentationTime++, 0);
+                    codec.queueInputBuffer(index, 0, buffer.capacity(), presentationTime, 0);
                 } catch (InterruptedException exception) {
                     Log.e(TAG, "Interrupted reading from ByteBuffer queue");
                 }
