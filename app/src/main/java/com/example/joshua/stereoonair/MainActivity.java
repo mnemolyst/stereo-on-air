@@ -31,10 +31,10 @@ public class MainActivity extends Activity {
 
     public static String serverAddress;
     public final static int port = 18353; // arbitrary
-//    public static int videoWidth = 800;
-//    public static int videoHeight = 600;
-    public static int videoWidth = 1280;
-    public static int videoHeight = 720;
+    public static int videoWidth = 800;
+    public static int videoHeight = 600;
+//    public static int videoWidth = 1280;
+//    public static int videoHeight = 720;
 //    public static int videoWidth = 1920;
 //    public static int videoHeight = 1080;
     public static String mimeType = "video/avc";
@@ -186,6 +186,7 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
 //                startServer();
+                Log.d(TAG, "Start viewer");
                 Intent viewerIntent = new Intent(MainActivity.this, ViewerActivity.class);
                 startActivity(viewerIntent);
             }
